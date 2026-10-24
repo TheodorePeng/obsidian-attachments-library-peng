@@ -9,7 +9,7 @@ fi
 VAULT="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-for file in main.js manifest.json; do
+for file in main.js manifest.json styles.css; do
   if [[ ! -f "$SCRIPT_DIR/$file" ]]; then
     echo "Error: missing '$file' — run 'npm run build' first." >&2
     exit 1
@@ -21,11 +21,13 @@ if [[ ! -d "$VAULT" ]]; then
   exit 1
 fi
 
-PLUGIN_DIR="$VAULT/.obsidian/plugins/attachments-library"
+PLUGIN_DIR="$VAULT/.obsidian/plugins/attachments-library-peng"
 mkdir -p "$PLUGIN_DIR"
 
 cp "$SCRIPT_DIR/main.js"      "$PLUGIN_DIR/main.js"
 cp "$SCRIPT_DIR/manifest.json" "$PLUGIN_DIR/manifest.json"
 
+cp "$SCRIPT_DIR/styles.css"  "$PLUGIN_DIR/styles.css"
+
 echo "Installed to $PLUGIN_DIR"
-echo "Reload the plugin in Obsidian: Settings -> Community Plugins -> disable -> re-enable Attachments Library"
+echo "Reload the plugin in Obsidian: Settings -> Community Plugins -> disable -> re-enable Attachments Library Peng"

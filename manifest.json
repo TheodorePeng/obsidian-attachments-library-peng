@@ -1,9 +1,9 @@
 {
-  "id": "attachments-library",
-  "name": "Attachments Library",
-  "version": "1.0.3",
-  "minAppVersion": "1.7.0",
-  "description": "Automatically indexes Attachments folder files with user-defined metadata via sidecar notes.",
-  "author": "José Compadre Junior",
+  "id": "attachments-library-peng",
+  "name": "Attachments Library Peng",
+  "version": "1.1.0",
+  "minAppVersion": "1.13.1",
+  "description": "Vault attachment metadata, reference-aware library and guarded cleanup.",
+  "author": "Jos\u00e9 Compadre Junior",
   "isDesktopOnly": false
 }

@@ -1,141 +1,90 @@
-import { App, normalizePath } from 'obsidian';
+import { App, normalizePath, parseYaml, stringifyYaml } from 'obsidian';
 import { AttachmentsLibrarySettings } from './types';
-import { t } from './i18n/i18n';
-
+export const VIEW_TYPE = 'attachments-library-peng';
+const OWNER = VIEW_TYPE + ':';
+export function upgradeBase(content: string, libraryFolder: string): string {
+    const parsed: unknown = content.trim() ? parseYaml(content) : { filters: `file.inFolder(${JSON.stringify(libraryFolder)})`, views: [{ type: 'table', name: 'Metadata table', order: ['file.name', 'title', 'source', 'status', 'al_usageState', 'al_keep'] }] };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+        throw new Error('Base must be a YAML mapping');
+    const config = parsed as Record<string, unknown>;
+    if (config.views !== undefined && !Array.isArray(config.views))
+        throw new Error('Base views must be a list');
+    const views = (config.views ?? []) as Record<string, unknown>[];
+    if (views.some(v => !v || typeof v !== 'object' || Array.isArray(v)))
+        throw new Error('Invalid Base view');
+    const definitions: [
+        string,
+        string
+    ][] = [['all', 'All attachments'], ['orphan', 'Orphan candidates'], ['cleanable', 'Cleanable'], ['problems', 'Needs attention']];
+    let changed = !content.trim();
+    for (const [id, name] of definitions) {
+        const marker = OWNER + id;
+        const existing = views.find(v => v.alpOwned === marker);
+        if (existing) {
+            const expected = { ...existing, type: VIEW_TYPE, name, alpOwned: marker, alpMode: id };
+            if (JSON.stringify(existing) !== JSON.stringify(expected)) {
+                Object.keys(existing).forEach(k => delete existing[k]);
+                Object.assign(existing, expected);
+                changed = true;
+            }
+        }
+        else {
+            const view: Record<string, unknown> = { type: VIEW_TYPE, name, alpOwned: marker, alpMode: id, pageSize: 60 };
+            views.push(view);
+            changed = true;
+        }
+    }
+    config.views = views;
+    return changed ? stringifyYaml(config) : content;
+}
 export class BasesCreator {
-  constructor(
-    private app: App,
-    private settings: AttachmentsLibrarySettings
-  ) {}
-
-  getBaseFilePathForFolder(folder: string): string {
-    const f = folder?.trim();
-    if (!f) return "Attachments Library.base";
-    return normalizePath(`${f}/Attachments Library.base`);
-  }
-
-  getBaseFilePath(): string {
-    return this.getBaseFilePathForFolder(this.settings.baseFolderPath);
-  }
-
-  async createOrUpdateBaseFile(): Promise<void> {
-    const basePath = this.getBaseFilePath();
-    const existing = this.app.vault.getFileByPath(basePath);
-    if (existing) return;
-
-    const folder = this.settings.baseFolderPath?.trim();
-    if (folder) {
-      await this.app.vault.createFolder(folder).catch(() => {});
+    isActive: () => boolean = () => true;
+    constructor(private app: App, private settings: AttachmentsLibrarySettings) { }
+    getBaseFilePathForFolder(folder: string): string { const f = folder.trim(); return normalizePath(f ? `${f}/Attachments Library.base` : 'Attachments Library.base'); }
+    getBaseFilePath(): string { return this.getBaseFilePathForFolder(this.settings.baseFolderPath); }
+    async createOrUpdateBaseFile(pathOverride?: string): Promise<string> {
+        const path = pathOverride ?? this.getBaseFilePath();
+        if (!this.isActive())
+            return path;
+        if (!path.endsWith('.base'))
+            throw new Error('Choose a .base file');
+        const existing = this.app.vault.getFileByPath(path);
+        const original = existing ? await this.app.vault.cachedRead(existing) : '';
+        const updated = upgradeBase(original, this.settings.libraryFolder);
+        if (!this.isActive() || updated === original)
+            return path;
+        const folder = path.split('/').slice(0, -1).join('/');
+        if (folder && !this.app.vault.getAbstractFileByPath(folder))
+            await this.app.vault.createFolder(folder);
+        if (!this.isActive())
+            return path;
+        if (existing) {
+            let backup = path + '.alp-backup';
+            let suffix = 1;
+            while (this.app.vault.getFileByPath(backup))
+                backup = path + '.alp-backup-' + suffix++;
+            await this.app.vault.create(backup, original);
+            if (this.isActive())
+                await this.app.vault.modify(existing, updated);
+        }
+        else
+            await this.app.vault.create(path, updated);
+        return path;
     }
-
-    const content = this.buildBaseContent();
-    await this.app.vault.create(basePath, content);
-  }
-
-  async moveBaseFile(oldFolder: string, newFolder: string): Promise<void> {
-    const baseName = "Attachments Library.base";
-    const oldPath = oldFolder.trim()
-      ? normalizePath(`${oldFolder.trim()}/${baseName}`)
-      : baseName;
-    const newPath = newFolder.trim()
-      ? normalizePath(`${newFolder.trim()}/${baseName}`)
-      : baseName;
-
-    if (oldPath === newPath) return;
-
-    const existingFile = this.app.vault.getFileByPath(oldPath);
-    if (!existingFile) return;
-
-    if (newFolder.trim()) {
-      await this.app.vault.createFolder(newFolder.trim()).catch(() => {});
+    async moveBaseFile(oldFolder: string, newFolder: string): Promise<void> {
+        if (!this.isActive())
+            return;
+        const oldPath = this.getBaseFilePathForFolder(oldFolder), newPath = this.getBaseFilePathForFolder(newFolder);
+        if (oldPath === newPath)
+            return;
+        const file = this.app.vault.getFileByPath(oldPath);
+        if (!file)
+            return;
+        if (this.app.vault.getFileByPath(newPath))
+            throw new Error('Destination Base already exists');
+        if (newFolder.trim() && !this.app.vault.getAbstractFileByPath(newFolder.trim()))
+            await this.app.vault.createFolder(newFolder.trim());
+        if (this.isActive())
+            await this.app.fileManager.renameFile(file, newPath);
     }
-
-    await this.app.fileManager.renameFile(existingFile, newPath);
-  }
-
-  private buildBaseContent(): string {
-    const tagsKey = this.settings.tagsPropertyName;
-    const orderList = [
-      "      - file.name",
-      "      - title",
-      "      - author",
-      "      - subject",
-      "      - genre",
-      "      - status",
-      `      - ${tagsKey}`,
-      "      - source",
-      "      - notes",
-      "      - created",
-      "      - updated",
-    ].join('\n');
-    return [
-      "filters:",
-      `  file.inFolder("${this.settings.libraryFolder}")`,
-      "",
-      "properties:",
-      `  attachment:`,
-      `    displayName: "${t('bases.columns.file')}"`,
-      `  title:`,
-      `    displayName: "${t('bases.columns.title')}"`,
-      `  author:`,
-      `    displayName: "${t('bases.columns.author')}"`,
-      `  subject:`,
-      `    displayName: "${t('bases.columns.subject')}"`,
-      `  genre:`,
-      `    displayName: "${t('bases.columns.genre')}"`,
-      `  status:`,
-      `    displayName: "${t('bases.columns.status')}"`,
-      `  ${tagsKey}:`,
-      `    displayName: "${t('bases.columns.tags')}"`,
-      `  source:`,
-      `    displayName: "${t('bases.columns.source')}"`,
-      `  notes:`,
-      `    displayName: "${t('bases.columns.notes')}"`,
-      `  created:`,
-      `    displayName: "${t('bases.columns.createdAt')}"`,
-      `  updated:`,
-      `    displayName: "${t('bases.columns.updatedAt')}"`,
-      `  _fileType:`,
-      `    displayName: "${t('bases.columns.type')}"`,
-      "",
-      "views:",
-      `  - type: table`,
-      `    name: "${t('bases.views.all')}"`,
-      `    order:`,
-      orderList,
-      `    sort:`,
-      `      - property: title`,
-      `        direction: ASC`,
-      "",
-      `  - type: table`,
-      `    name: "${t('bases.views.unread')}"`,
-      `    order:`,
-      orderList,
-      `    filters:`,
-      `      and:`,
-      `        - status.equals("unread")`,
-      `    sort:`,
-      `      - property: created`,
-      `        direction: DESC`,
-      "",
-      `  - type: table`,
-      `    name: "${t('bases.views.reading')}"`,
-      `    order:`,
-      orderList,
-      `    filters:`,
-      `      and:`,
-      `        - status.equals("reading")`,
-      "",
-      `  - type: table`,
-      `    name: "${t('bases.views.pdfsOnly')}"`,
-      `    order:`,
-      orderList,
-      `    filters:`,
-      `      and:`,
-      `        - _fileType.equals("pdf")`,
-      `    sort:`,
-      `      - property: author`,
-      `        direction: ASC`,
-    ].join('\n');
-  }
 }

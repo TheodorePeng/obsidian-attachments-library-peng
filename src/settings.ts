@@ -1,201 +1,24 @@
-import { App, Modal, PluginSettingTab, Setting } from 'obsidian';
+import { App, PluginSettingTab, Setting } from 'obsidian';
 import type AttachmentsLibraryPlugin from './main';
-import { t } from './i18n/i18n';
-
-function openConfirmModal(app: App, message: string, confirmText: string, cancelText: string): Promise<boolean> {
-  return new Promise(resolve => {
-    let answered = false;
-    class ConfirmModal extends Modal {
-      onOpen(): void {
-        this.contentEl.createEl('p', { text: message });
-        new Setting(this.contentEl)
-          .addButton(btn => btn.setButtonText(confirmText).setCta()
-            .onClick(() => { answered = true; resolve(true); this.close(); }))
-          .addButton(btn => btn.setButtonText(cancelText)
-            .onClick(() => { answered = true; resolve(false); this.close(); }));
-      }
-      onClose(): void {
-        this.contentEl.empty();
-        if (!answered) resolve(false);
-      }
-    }
-    new ConfirmModal(app).open();
-  });
-}
-
+import { normalizeExtensions } from './file-policy';
 export class AttachmentsLibrarySettingsTab extends PluginSettingTab {
-  constructor(app: App, private plugin: AttachmentsLibraryPlugin) {
-    super(app, plugin);
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    new Setting(containerEl).setName(t('settings.heading')).setHeading();
-
-    new Setting(containerEl).setName(t('settings.sections.folders')).setHeading();
-
-    new Setting(containerEl)
-      .setName(t('settings.attachmentsFolder.name'))
-      .setDesc(t('settings.attachmentsFolder.desc'))
-      .addText(text => text
-        .setPlaceholder(t('settings.attachmentsFolder.placeholder'))
-        .setValue(this.plugin.settings.attachmentsFolder)
-        .onChange(async (value) => {
-          this.plugin.settings.attachmentsFolder = value.trim() || 'Attachments';
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName(t('settings.libraryFolder.name'))
-      .setDesc(t('settings.libraryFolder.desc'))
-      .addText(text => text
-        .setPlaceholder(t('settings.libraryFolder.placeholder'))
-        .setValue(this.plugin.settings.libraryFolder)
-        .onChange(async (value) => {
-          this.plugin.settings.libraryFolder = value.trim() || 'Library';
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName(t('settings.mirrorStructure.name'))
-      .setDesc(t('settings.mirrorStructure.desc'))
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.mirrorFolderStructure)
-        .onChange(async (value) => {
-          this.plugin.settings.mirrorFolderStructure = value;
-          await this.plugin.saveSettings();
-        }));
-
-    let baseFolderMoveFrom = this.plugin.settings.baseFolderPath;
-    let baseFolderPending = this.plugin.settings.baseFolderPath;
-    new Setting(containerEl)
-      .setName(t('settings.baseFolder.name'))
-      .setDesc(t('settings.baseFolder.desc'))
-      .addText(text => text
-        .setPlaceholder(t('settings.baseFolder.placeholder'))
-        .setValue(this.plugin.settings.baseFolderPath)
-        .onChange(value => { baseFolderPending = value.trim(); }))
-      .addButton(btn => btn
-        .setButtonText(t('settings.baseFolder.moveBtn'))
-        .onClick(() => { void (async () => {
-          const oldFolder = baseFolderMoveFrom;
-          const newFolder = baseFolderPending;
-          const destPath = this.plugin.getBaseFilePathFor(newFolder);
-          const destFile = this.plugin.app.vault.getFileByPath(destPath);
-          if (destFile) {
-            const confirmed = await openConfirmModal(
-              this.plugin.app,
-              t('settings.baseFolder.conflictWarning'),
-              t('settings.baseFolder.conflictConfirmBtn'),
-              t('settings.baseFolder.conflictCancelBtn'),
-            );
-            if (!confirmed) return;
-            await this.plugin.app.fileManager.trashFile(destFile);
-          }
-          this.plugin.settings.baseFolderPath = newFolder;
-          await this.plugin.saveSettings();
-          await this.plugin.moveBaseFile(oldFolder, newFolder);
-          baseFolderMoveFrom = newFolder;
-          btn.setButtonText(t('settings.baseFolder.movedBtn'));
-          window.setTimeout(() => { btn.setButtonText(t('settings.baseFolder.moveBtn')); }, 3000);
-        })(); }));
-
-    new Setting(containerEl).setName(t('settings.sections.behavior')).setHeading();
-
-    new Setting(containerEl)
-      .setName(t('settings.autoCreate.name'))
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.autoCreateOnNew)
-        .onChange(async (value) => {
-          this.plugin.settings.autoCreateOnNew = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName(t('settings.autoDelete.name'))
-      .setDesc(t('settings.autoDelete.desc'))
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.autoDeleteOnRemove)
-        .onChange(async (value) => {
-          this.plugin.settings.autoDeleteOnRemove = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl).setName(t('settings.sections.tagsProperty')).setHeading();
-
-    new Setting(containerEl)
-      .setName(t('settings.tagsPropertyName.name'))
-      .setDesc(t('settings.tagsPropertyName.desc'))
-      .addText(text => text
-        .setPlaceholder(t('settings.tagsPropertyName.placeholder'))
-        .setValue(this.plugin.settings.tagsPropertyName)
-        .onChange(async (value) => {
-          this.plugin.settings.tagsPropertyName = value.trim() || 'tags';
-          await this.plugin.saveSettings();
-        }));
-
-    let migrateFromInput = '';
-    new Setting(containerEl)
-      .setName(t('settings.migrateTags.name'))
-      .setDesc(t('settings.migrateTags.desc'))
-      .addText(text => text
-        .setPlaceholder(t('settings.migrateTags.placeholder'))
-        .onChange(value => { migrateFromInput = value.trim(); }))
-      .addButton(btn => btn
-        .setButtonText(t('settings.migrateTags.renameBtn'))
-        .onClick(() => { void (async () => {
-          if (!migrateFromInput) return;
-          const newName = this.plugin.settings.tagsPropertyName;
-          const count = await this.plugin.migrateTagsProperty(migrateFromInput, newName);
-          btn.setButtonText(t('settings.migrateTags.doneBtn', { count }));
-          window.setTimeout(() => { btn.setButtonText(t('settings.migrateTags.renameBtn')); }, 4000);
-        })(); }));
-
-    new Setting(containerEl)
-      .setName(t('settings.sanitizeTags.name'))
-      .setDesc(t('settings.sanitizeTags.desc'))
-      .addButton(btn => btn
-        .setButtonText(t('settings.sanitizeTags.btn'))
-        .onClick(() => { void (async () => {
-          const count = await this.plugin.sanitizeSidecarTags();
-          btn.setButtonText(t('settings.sanitizeTags.doneBtn', { count }));
-          window.setTimeout(() => { btn.setButtonText(t('settings.sanitizeTags.btn')); }, 4000);
-        })(); }));
-
-    new Setting(containerEl).setName(t('settings.sections.pdfMetadata')).setHeading();
-
-    new Setting(containerEl)
-      .setName(t('settings.pdfExtraction.name'))
-      .setDesc(t('settings.pdfExtraction.desc'))
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.enablePdfMetadataExtraction)
-        .onChange(async (value) => {
-          this.plugin.settings.enablePdfMetadataExtraction = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName(t('settings.doiLookup.name'))
-      .setDesc(t('settings.doiLookup.desc'))
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.enableDoiIsbnLookup)
-        .onChange(async (value) => {
-          this.plugin.settings.enableDoiIsbnLookup = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl).setName(t('settings.sections.actions')).setHeading();
-
-    new Setting(containerEl)
-      .setName(t('settings.backfill.name'))
-      .setDesc(t('settings.backfill.desc'))
-      .addButton(btn => btn
-        .setButtonText(t('settings.backfill.btn'))
-        .setCta()
-        .onClick(() => {
-          void this.plugin.runBackfill();
-        }));
-  }
+    constructor(app: App, private plugin: AttachmentsLibraryPlugin) { super(app, plugin); }
+    display(): void {
+        const el = this.containerEl;
+        el.empty();
+        const s = this.plugin.settings;
+        new Setting(el).setName('Indexing').setHeading();
+        new Setting(el).setName('Index scope').setDesc('Reference checks always scan the whole vault. Markdown, canvas, bases, hidden folders and library are always excluded from attachment indexing.').addDropdown(drop => drop.addOptions({ vault: 'Entire Vault', folder: 'Attachment folder' }).setValue(s.indexScope).onChange(async (value) => { s.indexScope = value === 'folder' ? 'folder' : 'vault'; await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Attachment folder').addText(text => text.setValue(s.attachmentsFolder).onChange(async (value) => { s.attachmentsFolder = value.trim().replace(/^\/+|\/+$/g, '') || 'Attachments'; await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Library folder').setDesc('Existing metadata documents remain at their current location.').addText(text => text.setValue(s.libraryFolder).onChange(async (value) => { s.libraryFolder = value.trim().replace(/^\/+|\/+$/g, '') || 'Library'; await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Extensions').setDesc('Comma separated extension whitelist.').addText(text => text.setValue(s.watchedExtensions.join(', ')).onChange(async (value) => { s.watchedExtensions = normalizeExtensions(value.split(',')); await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Create indexes for new attachments').setDesc('Enabled only after the first confirmed full scan. External deletion always preserves the metadata document.').addToggle(toggle => toggle.setValue(s.autoCreateOnNew).onChange(async (value) => { s.autoCreateOnNew = value; await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Image button cmd/ctrl-click').addDropdown(drop => drop.addOptions({ index: 'Open source URL', nativeCmdClick: 'Native internal link behavior' }).setValue(s.imageClickMode).onChange(async (value) => { s.imageClickMode = value === 'nativeCmdClick' ? 'nativeCmdClick' : 'index'; await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Base folder').setDesc('Applies to the next explicit open/create command. Existing base files are never replaced or moved automatically.').addText(text => text.setValue(s.baseFolderPath).onChange(async (value) => { s.baseFolderPath = value.trim(); await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Tags property').addText(text => text.setValue(s.tagsPropertyName).onChange(async (value) => { s.tagsPropertyName = value.trim() || 'tags'; await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Extract PDF document metadata').setDesc('Reads local PDF title, author, subject and keywords only when creating a new index.').addToggle(toggle => toggle.setValue(s.enablePdfMetadataExtraction).onChange(async (value) => { s.enablePdfMetadataExtraction = value; await this.plugin.saveSettings(); }));
+        new Setting(el).setName('Scan and index').setDesc('Previews new documents before adopting usage fields. Existing ocr and note bodies are preserved.').addButton(button => button.setButtonText('Preview full scan').onClick(() => { void this.plugin.runBackfill(); }));
+        new Setting(el).setName('Open library').setDesc('Creates a new base or backs up and appends owned views to the existing base.').addButton(button => button.setButtonText('Open library').onClick(() => { void this.plugin.openLibrary(); }));
+        new Setting(el).setName('Refresh references').addButton(button => button.setButtonText('Refresh').onClick(() => { void this.plugin.refreshUsage(); }));
+    }
 }

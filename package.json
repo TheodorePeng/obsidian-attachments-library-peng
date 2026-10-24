@@ -1,8 +1,8 @@
 {
-  "name": "attachments-library",
-  "version": "1.0.3",
-  "description": "Automatically indexes Attachments folder with metadata sidecar notes",
-  "author": "José Compadre Junior",
+  "name": "attachments-library-peng",
+  "version": "1.1.0",
+  "description": "Vault attachment metadata, reference-aware library and guarded cleanup.",
+  "author": "Jos\u00e9 Compadre Junior",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -15,11 +15,14 @@
     "pipeline": "npm run lint && npm run test:coverage && npm run build"
   },
   "devDependencies": {
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.9",
     "esbuild": "^0.28.1",
     "eslint": "^10.6.0",
     "eslint-plugin-obsidianmd": "^0.3.0",
+    "happy-dom": "21.0.4",
     "obsidian": "latest",
     "tslib": "2.4.0",
     "typescript": "^5.9.3",

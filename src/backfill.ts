@@ -1,61 +1,38 @@
 import { App, Notice } from 'obsidian';
 import { AttachmentsLibrarySettings } from './types';
 import { SidecarManager } from './sidecar-manager';
-import { t } from './i18n/i18n';
-
+import { isEligiblePath } from './file-policy';
+import { confirmAction } from './dialogs';
 export class BackfillManager {
-  constructor(
-    private app: App,
-    private settings: AttachmentsLibrarySettings,
-    private sidecarManager: SidecarManager
-  ) {}
-
-  async runBackfill(): Promise<void> {
-    const attachmentsFolder = this.app.vault.getFolderByPath(
-      this.settings.attachmentsFolder
-    );
-
-    if (!attachmentsFolder) {
-      new Notice(t('backfill.folderNotFound', { folder: this.settings.attachmentsFolder }));
-      return;
-    }
-
-    const allFiles = this.app.vault.getFiles().filter(f =>
-      f.path.startsWith(this.settings.attachmentsFolder + "/") &&
-      this.settings.watchedExtensions.includes("." + f.extension) &&
-      !f.path.startsWith(this.settings.libraryFolder + "/")
-    );
-
-    const total = allFiles.length;
-    let processed = 0;
-    let created = 0;
-    let skipped = 0;
-
-    new Notice(t('backfill.starting', { total }));
-
-    for (let i = 0; i < allFiles.length; i += 10) {
-      const batch = allFiles.slice(i, i + 10);
-
-      await Promise.all(batch.map(async (file) => {
-        const sidecarPath = this.sidecarManager.getSidecarPath(file.path);
-        const exists = this.app.vault.getFileByPath(sidecarPath);
-
-        if (exists) {
-          skipped++;
-        } else {
-          await this.sidecarManager.createSidecar(file);
-          created++;
+    constructor(private app: App, private settings: AttachmentsLibrarySettings, private sidecarManager: SidecarManager, private save?: () => Promise<void>, private confirm = confirmAction) { }
+    async runBackfill(): Promise<void> {
+        if (!this.sidecarManager.isActive())
+            return;
+        const registry = this.sidecarManager.registry;
+        await registry.refresh();
+        const files = this.app.vault.getFiles().filter(f => isEligiblePath(f.path, this.settings));
+        const missing = files.filter(f => !registry.records.get(f.path)?.indexPath && !registry.records.get(f.path)?.conflict);
+        const conflicts = [...registry.records.values()].filter(r => r.conflict);
+        const approved = await this.confirm(this.app, 'Scan and index attachments', [
+            `${files.length} eligible attachments; ${missing.length} new metadata documents; ${conflicts.length} conflicts skipped.`,
+            'Existing indexes keep their location, Properties and body. Derived al_* usage fields will be adopted after this scan.',
+            ...missing.map(f => f.path + ' → ' + this.sidecarManager.getSidecarPath(f.path)), ...conflicts.map(r => 'Protected conflict: ' + r.assetPath),
+        ], 'Create indexes and adopt usage fields');
+        if (!approved || !this.sidecarManager.isActive())
+            return;
+        for (const file of missing) {
+            if (!this.sidecarManager.isActive())
+                return;
+            await this.sidecarManager.createSidecar(file);
         }
-        processed++;
-      }));
-
-      if (processed % 50 === 0 || processed === total) {
-        new Notice(t('backfill.progress', { processed, total, created, skipped }));
-      }
-
-      await new Promise(resolve => window.setTimeout(resolve, 50));
+        if (!this.sidecarManager.isActive())
+            return;
+        this.settings.initialScanComplete = true;
+        await this.save?.();
+        await registry.refresh();
+        await this.sidecarManager.references?.refresh();
+        for (const record of registry.records.values())
+            await this.sidecarManager.writeDerived(record);
+        new Notice(`Indexed ${missing.length} attachments. ${conflicts.length} conflicts preserved.`);
     }
-
-    new Notice(t('backfill.complete', { created, skipped }));
-  }
 }
