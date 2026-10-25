@@ -12,7 +12,7 @@ async function setup(contents: Record<string,string> = {}) {
 const oldBase='filters: file.inFolder("Library")\nviews:\n - type: cards\n   name: Cards\n - type: attachments-library-peng\n   name: All attachments\n   alpOwned: attachments-library-peng:all\n';
 it('opens the owned view by marker while preserving names and original config',async()=>{
   const f=await setup({'Attachments Library.base':oldBase}); await f.p.openLibrary();
-  expect(f.app.workspace.getLeaf.mock.results.at(-1)!.value.setViewState).toHaveBeenCalledWith({type:'bases',state:{file:'Attachments Library.base',viewName:'All attachments'}});expect(f.writes).toEqual([]);
+  expect(f.app.workspace.getLeaf.mock.results.at(-1)!.value.setViewState).toHaveBeenCalledWith({type:'bases',state:{file:'Attachments Library.base',viewName:'All attachments'}});expect(f.data.get('Attachments Library.base.alp-gallery-backup')).toBe(oldBase);expect(f.data.get('Attachments Library.base')).toContain('file.name');
 });
 it('requires consent for a Base without managed views, then appends without replacing native views',async()=>{
   const f=await setup({'Attachments Library.base':'views:\n - type: table\n   name: Mine\n'});
@@ -38,3 +38,5 @@ it('an unrelated source change does not abort an already safe deletion snapshot'
 it('rechecks the index fingerprint after the asset step and reports an intervening edit',async()=>{
   const f=await setup({'a.png':'image','Library/a.md':'---\n_filePath: a.png\nattachment: "[[a.png]]"\n---\nOCR'});const plan=await f.p.deletions.prepare(['a.png'],'pair');const trash=f.app.vault.trash.getMockImplementation()!;f.app.vault.trash.mockImplementation(async(file:any)=>{await trash(file);if(file.path==='a.png') f.data.set('Library/a.md',f.data.get('Library/a.md')+'\nnew OCR');});const result=await f.p.deletions.execute(plan);expect(result.status).toBe('partial');expect(result.steps.map(s=>s.status)).toEqual(['trashed','failed']);expect(f.files.has('Library/a.md')).toBe(true);
 });
+
+it("unloads native-owned gallery components when the plugin stops", async () => { const f=await setup(); const view={unload:vi.fn(()=>f.p.galleryViews.delete(view as any))}; f.p.galleryViews.add(view as any); for (const stop of f.p.disposers) stop(); expect(view.unload).toHaveBeenCalledTimes(1); expect(f.p.galleryViews.size).toBe(0); });

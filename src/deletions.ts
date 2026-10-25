@@ -52,6 +52,7 @@ export class DeletionService {
     private issued = new Map<string, string>();
     private busy = false;
     private ownedPaths = new Set<string>();
+    hasPendingEdits = (_indexPath: string): boolean => false;
     ownsPath(path: string): boolean { return this.ownedPaths.has(path); }
     private async persistLog(result: DeleteResult, plan: DeletePlan): Promise<boolean> {
         const root = this.app.vault.configDir + '/plugins/attachments-library-peng';
@@ -88,6 +89,7 @@ export class DeletionService {
     }
     private assertAllowed(record: AttachmentRecord, mode: DeleteMode): void {
         const usage = this.references.getUsage(record);
+        if ((record.indexPaths ?? (record.indexPath ? [record.indexPath] : [])).some(path => this.hasPendingEdits(path))) throw new Error('索引有未提交的卡片属性编辑，请先保存或取消');
         if (record.conflict || record.metadata.al_keep === true || usage.state === 'excluded')
             throw new Error('Protected attachment: ' + record.assetPath + ' (' + usage.state + ')');
         if (!record.index || !record.indexPath)

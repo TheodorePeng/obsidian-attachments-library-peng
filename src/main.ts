@@ -13,6 +13,9 @@ import { HOVER_SOURCE, ImageNavigation } from './image-navigation';
 import { confirmAction } from './dialogs';
 import { parseMarkdownLinks } from './markdown-links';
 import { isEligiblePath, normalizeExtensions } from './file-policy';
+import { GalleryPropertyEdits } from './property-edits';
+import { GALLERY_HOVER_SOURCE } from './gallery-hover';
+import { galleryViewOptions } from './gallery-options';
 export default class AttachmentsLibraryPlugin extends Plugin {
     settings: AttachmentsLibrarySettings;
     registry: AttachmentRegistry;
@@ -21,6 +24,8 @@ export default class AttachmentsLibraryPlugin extends Plugin {
     sidecarManager: SidecarManager;
     basesCreator: BasesCreator;
     images: ImageNavigation;
+    propertyEdits: GalleryPropertyEdits;
+    readonly galleryViews = new Set<AttachmentsLibraryView>();
     ready: Promise<void> = Promise.resolve();
     private backfillManager: BackfillManager;
     private eventQueue = Promise.resolve();
@@ -40,16 +45,22 @@ export default class AttachmentsLibraryPlugin extends Plugin {
             return; const snapshots = [...this.registry.records.values()].map(record => ({ record, usage: this.references.getUsage(record) })); for (const { record, usage } of snapshots)
             if (!this.deletions?.ownsPath(record.assetPath) && !this.deletions?.ownsPath(record.indexPath ?? '')) await this.sidecarManager.writeDerived(record, usage); };
         this.deletions = new DeletionService(this.app, this.registry, this.references);
+        this.propertyEdits = new GalleryPropertyEdits(this.app, this.registry);
+        this.propertyEdits.isActive = () => !this.stopped;
+        this.propertyEdits.isDeleting = path => this.deletions.ownsPath(path);
+        this.propertyEdits.afterSave = () => this.refreshUsage();
+        this.deletions.hasPendingEdits = path => this.propertyEdits.hasPending(path);
         this.backfillManager = new BackfillManager(this.app, this.settings, this.sidecarManager, () => this.saveData(this.settings));
         this.basesCreator = new BasesCreator(this.app, this.settings);
         this.basesCreator.isActive = () => !this.stopped;
         this.deletions.isActive = () => !this.stopped;
         this.images = new ImageNavigation(this.app, this.settings, this.registry, this.sidecarManager);
         this.registerHoverLinkSource(HOVER_SOURCE, { display: 'Attachments Library Peng', defaultMod: true });
-        this.registerBasesView(VIEW_TYPE, { name: 'Attachments Library Peng', icon: 'images', factory: (controller, container) => new AttachmentsLibraryView(controller, container, this) });
+        this.registerHoverLinkSource(GALLERY_HOVER_SOURCE, { display: '附件画廊索引', defaultMod: true });
+        this.registerBasesView(VIEW_TYPE, { name: '附件画廊（Peng）', icon: 'layout-grid', options: galleryViewOptions, factory: (controller, container) => new AttachmentsLibraryView(controller, container, this) });
         this.registerMarkdownPostProcessor((element, context) => { const child = new MarkdownRenderChild(element); child.register(this.images.observe(element, () => context.sourcePath, child)); context.addChild(child); });
         this.registerEditorExtension(this.images.editorExtension());
-        this.register(() => { this.references.dispose(); this.images.dispose(); });
+        this.register(() => { for (const view of [...this.galleryViews]) view.unload(); this.references.dispose(); this.images.dispose(); if (this.propertyEdits.drafts.size) new Notice('插件停用：未提交的属性编辑未写入文件。'); this.propertyEdits.dispose(); });
         this.registerVaultEvents();
         this.registerEvent(this.app.metadataCache.on('changed', (file: TFile, data: string) => { this.references.cacheChanged(file.path, data); }));
         this.registerEvent(this.app.metadataCache.on('resolved', () => { this.queue(() => this.refreshUsage()); }));
@@ -106,6 +117,7 @@ export default class AttachmentsLibraryPlugin extends Plugin {
             return;
         this.images.refresh();
         await this.references.refresh();
+        for (const view of this.galleryViews) if (view.data) view.onDataUpdated();
     }
     async openLibrary(pathOverride?: string): Promise<void> {
         const path = await this.basesCreator.createOrUpdateBaseFile(pathOverride);
@@ -119,6 +131,8 @@ export default class AttachmentsLibraryPlugin extends Plugin {
             config = parseYaml(await this.app.vault.cachedRead(file)) as typeof config;
             view = config.views?.find(v => v.alpOwned === 'attachments-library-peng:all');
         }
+        await this.basesCreator.ensureGalleryDefaults(path);
+        if (this.stopped) return;
         const leaf = this.app.workspace.getLeaf(false);
         await leaf.openFile(file);
         if (view && !this.stopped) await leaf.setViewState({ type: 'bases', state: { file: path, viewName: view.name } });

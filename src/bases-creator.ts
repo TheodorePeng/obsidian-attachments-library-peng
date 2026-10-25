@@ -1,5 +1,6 @@
 import { App, normalizePath, parseYaml, stringifyYaml } from 'obsidian';
 import { AttachmentsLibrarySettings } from './types';
+import { GALLERY_DEFAULT_ORDER } from './gallery-config';
 export const VIEW_TYPE = 'attachments-library-peng';
 const OWNER = VIEW_TYPE + ':';
 export function upgradeBase(content: string, libraryFolder: string): string {
@@ -29,7 +30,7 @@ export function upgradeBase(content: string, libraryFolder: string): string {
             }
         }
         else {
-            const view: Record<string, unknown> = { type: VIEW_TYPE, name, alpOwned: marker, alpMode: id, pageSize: 60 };
+            const view: Record<string, unknown> = { type: VIEW_TYPE, name, alpOwned: marker, alpMode: id, pageSize: 60, order: [...GALLERY_DEFAULT_ORDER], image: 'note.attachment' };
             views.push(view);
             changed = true;
         }
@@ -57,6 +58,18 @@ export function reviewBaseConfiguration(content: string, libraryFolder: string, 
     }
     const output = stringifyYaml(config);
     return { content: JSON.stringify(parseYaml(content)) === JSON.stringify(config) ? content : output, changes };
+}
+/** Initialize only missing property order on this plugin's own views. */
+export function initializeGalleryViews(content: string): string {
+    const parsed: unknown = parseYaml(content);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Base must be a YAML mapping');
+    const config = parsed as Record<string, unknown>;
+    if (config.views !== undefined && !Array.isArray(config.views)) throw new Error('Base views must be a list');
+    let changed = false;
+    for (const view of (config.views ?? []) as Record<string, unknown>[]) {
+        if (view && view.type === VIEW_TYPE && typeof view.alpOwned === 'string' && view.alpOwned.startsWith(OWNER) && view.order === undefined) { view.order = [...GALLERY_DEFAULT_ORDER]; changed = true; }
+    }
+    return changed ? stringifyYaml(config) : content;
 }
 export class BasesCreator {
     isActive: () => boolean = () => true;
@@ -92,6 +105,15 @@ export class BasesCreator {
         else
             await this.app.vault.create(path, updated);
         return path;
+    }
+    async ensureGalleryDefaults(path: string): Promise<void> {
+        const file = this.app.vault.getFileByPath(path); if (!file || !this.isActive()) return;
+        const original = await this.app.vault.cachedRead(file);
+        const updated = initializeGalleryViews(original); if (updated === original || !this.isActive()) return;
+        let backup = path + '.alp-gallery-backup'; let suffix = 1;
+        while (this.app.vault.getAbstractFileByPath(backup)) backup = path + '.alp-gallery-backup-' + suffix++;
+        await this.app.vault.create(backup, original);
+        await this.app.vault.process(file, current => { if (!this.isActive() || current !== original) throw new Error('Base 已变化，请重新打开；原配置已备份'); return updated; });
     }
     async moveBaseFile(oldFolder: string, newFolder: string): Promise<void> {
         if (!this.isActive())

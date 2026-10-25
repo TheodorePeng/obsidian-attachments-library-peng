@@ -58,6 +58,7 @@ export class Notice {
 export const normalizePath = (path: string) => path.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/$/, '');
 export class Component {
     callbacks: any[] = [];
+    unload() { (this as any).onunload?.(); for (const callback of this.callbacks) callback(); }
     register(cb: any) { this.callbacks.push(cb); }
     registerDomEvent(el: any, type: any, cb: any) { el.addEventListener(type, cb); this.register(() => el.removeEventListener(type, cb)); }
 }
@@ -93,6 +94,21 @@ export class Menu {
     constructor() { menuInstances.push(this); }
     addItem(cb: any) { const item: any = { setTitle: (title: any) => { item.title = title; return item; }, setIcon: () => item, onClick: (fn: any) => { item.callback = fn; return item; } }; cb(item); this.items.push(item); return this; }
     showAtMouseEvent(_event: any) { }
+    showAtPosition(_position: any) { }
 }
 export const setIcon = vi.fn();
 export const editorInfoField = StateField.define<any>({ create: () => ({ file: null }), update: value => value });
+
+export class RenderContext { hoverPopover = null; }
+export class Value {
+    constructor(public raw: any) {}
+    toString() { return Array.isArray(this.raw) ? this.raw.join(', ') : this.raw == null ? '' : String(this.raw); }
+    isTruthy() { return Array.isArray(this.raw) ? this.raw.length > 0 : !!this.raw; }
+    renderTo(el: HTMLElement, _ctx: RenderContext) { el.textContent = this.toString(); }
+}
+export class NullValue extends Value { constructor() { super(null); } }
+export class ListValue extends Value {}
+export class StringValue extends Value {}
+export class BooleanValue extends Value {}
+export class NumberValue extends Value {}
+export class LinkValue extends StringValue { renderTo(el:HTMLElement,_ctx:RenderContext) { const a=document.createElement('a');a.href=String(this.raw);a.textContent=String(this.raw);el.appendChild(a); } }
