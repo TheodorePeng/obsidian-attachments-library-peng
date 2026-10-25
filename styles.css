@@ -14,3 +14,19 @@
 .alp-confirm-list { max-height:60vh; overflow:auto; overflow-wrap:anywhere; }
 .alp-full-preview { max-width:100%; max-height:70vh; }
 .alp-pdf-preview { width:100%; height:70vh; border:0; }
+/* The control is a sibling of the image embed, never its descendant. */
+.alp-image-frame { position:relative; display:inline-block; max-width:100%; vertical-align:middle; line-height:0; }
+.alp-image-frame > .internal-embed { max-width:100%; }
+.alp-image-link { width:24px; height:24px; top:50%; right:2px; transform:translateY(-50%); border:0; background:transparent; opacity:0; pointer-events:none; transition:opacity 120ms ease; padding:0; }
+.alp-image-glyph { box-sizing:border-box; display:flex; width:20px; height:20px; align-items:center; justify-content:center; border:1px solid var(--background-modifier-border); border-radius:var(--radius-s); background:var(--background-primary); font-size:14px; line-height:1; }
+.alp-image-visible, .alp-image-link:focus-visible, .alp-image-always { opacity:1; pointer-events:auto; }
+.alp-image-link:focus-visible { outline:2px solid var(--interactive-accent); outline-offset:2px; }
+.alp-editor-overlay { position:fixed; inset:0; pointer-events:none; z-index:3; overflow:hidden; }
+.alp-editor-overlay > .alp-image-link { position:absolute; transform:none; right:auto; }
+@media (hover:none), (pointer:coarse) { .alp-image-link { opacity:1; pointer-events:auto; } }
+@media (prefers-reduced-motion:reduce) { .alp-image-link { transition:none; } }
+.alp-manager-intro { color:var(--text-muted); margin-bottom:var(--size-4-3); }
+.alp-delete-item { border:1px solid var(--background-modifier-border); border-radius:var(--radius-m); padding:var(--size-4-3); margin-block:var(--size-4-2); }
+.alp-delete-item p { overflow-wrap:anywhere; }
+.alp-delete-blocked { color:var(--text-warning); }
+.alp-reference-link { display:block; overflow-wrap:anywhere; }

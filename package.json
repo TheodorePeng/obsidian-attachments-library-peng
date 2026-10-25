@@ -1,8 +1,8 @@
 {
   "name": "attachments-library-peng",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Vault attachment metadata, reference-aware library and guarded cleanup.",
-  "author": "Jos\u00e9 Compadre Junior",
+  "author": "José Compadre Junior",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -31,6 +31,9 @@
   },
   "dependencies": {
     "i18next": "^26.3.3",
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-math": "3.0.0",
+    "micromark-extension-math": "3.1.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.4.168"
   }

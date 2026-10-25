@@ -3,7 +3,7 @@ import { AttachmentsLibrarySettings } from './types';
 export const VIEW_TYPE = 'attachments-library-peng';
 const OWNER = VIEW_TYPE + ':';
 export function upgradeBase(content: string, libraryFolder: string): string {
-    const parsed: unknown = content.trim() ? parseYaml(content) : { filters: `file.inFolder(${JSON.stringify(libraryFolder)})`, views: [{ type: 'table', name: 'Metadata table', order: ['file.name', 'title', 'source', 'status', 'al_usageState', 'al_keep'] }] };
+    const parsed: unknown = content.trim() ? parseYaml(content) : { filters: { and: ['file.ext == "md"', { or: ['al_schema == 1', { and: [`file.inFolder(${JSON.stringify(libraryFolder)})`, '_filePath != null', 'attachment != null'] }] }] }, views: [{ type: 'table', name: 'Metadata table', order: ['file.name', 'title', 'source', 'status', 'al_usageState', 'al_keep'] }] };
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
         throw new Error('Base must be a YAML mapping');
     const config = parsed as Record<string, unknown>;
@@ -15,13 +15,13 @@ export function upgradeBase(content: string, libraryFolder: string): string {
     const definitions: [
         string,
         string
-    ][] = [['all', 'All attachments'], ['orphan', 'Orphan candidates'], ['cleanable', 'Cleanable'], ['problems', 'Needs attention']];
+    ][] = [['all', '附件管理'], ['orphan', '孤儿候选'], ['cleanable', '待清理'], ['problems', '异常与待检查']];
     let changed = !content.trim();
     for (const [id, name] of definitions) {
         const marker = OWNER + id;
         const existing = views.find(v => v.alpOwned === marker);
         if (existing) {
-            const expected = { ...existing, type: VIEW_TYPE, name, alpOwned: marker, alpMode: id };
+            const expected = { ...existing, type: VIEW_TYPE, alpOwned: marker, alpMode: id };
             if (JSON.stringify(existing) !== JSON.stringify(expected)) {
                 Object.keys(existing).forEach(k => delete existing[k]);
                 Object.assign(existing, expected);
@@ -37,18 +37,40 @@ export function upgradeBase(content: string, libraryFolder: string): string {
     config.views = views;
     return changed ? stringifyYaml(config) : content;
 }
+export function reviewBaseConfiguration(content: string, libraryFolder: string, referencedNames: Set<string>): { content: string; changes: string[] } {
+    const config = parseYaml(content) as Record<string, unknown>;
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Base must be a YAML mapping');
+    const changes: string[] = [];
+    const names: Record<string, string> = { all: '附件管理', orphan: '孤儿候选', cleanable: '待清理', problems: '异常与待检查' };
+    for (const view of (config.views ?? []) as Record<string, unknown>[]) {
+        if (typeof view.alpOwned !== 'string' || typeof view.name !== 'string') continue;
+        const mode = view.alpOwned.replace('attachments-library-peng:', '');
+        if (!names[mode] || view.name === names[mode]) continue;
+        if (referencedNames.has(view.name)) { changes.push('保留被引用的旧视图名：' + view.name); continue; }
+        changes.push('视图名：' + view.name + ' → ' + names[mode]); view.name = names[mode];
+    }
+    const managed = (parseYaml(upgradeBase('', libraryFolder)) as Record<string, unknown>).filters;
+    const marker = 'al_schema == 1';
+    if (!JSON.stringify(config.filters ?? null).includes(marker)) {
+        changes.push('扩展全局筛选：保留原条件并加入已识别索引范围。');
+        config.filters = config.filters ? { or: [config.filters, managed] } : managed;
+    }
+    const output = stringifyYaml(config);
+    return { content: JSON.stringify(parseYaml(content)) === JSON.stringify(config) ? content : output, changes };
+}
 export class BasesCreator {
     isActive: () => boolean = () => true;
     constructor(private app: App, private settings: AttachmentsLibrarySettings) { }
     getBaseFilePathForFolder(folder: string): string { const f = folder.trim(); return normalizePath(f ? `${f}/Attachments Library.base` : 'Attachments Library.base'); }
     getBaseFilePath(): string { return this.getBaseFilePathForFolder(this.settings.baseFolderPath); }
-    async createOrUpdateBaseFile(pathOverride?: string): Promise<string> {
+    async createOrUpdateBaseFile(pathOverride?: string, upgrade = false): Promise<string> {
         const path = pathOverride ?? this.getBaseFilePath();
         if (!this.isActive())
             return path;
         if (!path.endsWith('.base'))
             throw new Error('Choose a .base file');
         const existing = this.app.vault.getFileByPath(path);
+        if (existing && !upgrade) return path;
         const original = existing ? await this.app.vault.cachedRead(existing) : '';
         const updated = upgradeBase(original, this.settings.libraryFolder);
         if (!this.isActive() || updated === original)

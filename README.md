@@ -1,6 +1,6 @@
 # Attachments Library Peng
 
-独立的 Obsidian 附件管理插件，基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发。插件 ID 为 `attachments-library-peng`，版本 `1.1.0`，最低 Obsidian 版本 `1.13.1`。保留原项目的 MIT 许可和作者信息。
+独立的 Obsidian 附件管理插件，基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发。插件 ID 为 `attachments-library-peng`，版本 `1.2.0`，最低 Obsidian 版本 `1.13.1`。保留原项目的 MIT 许可和作者信息。
 
 附件原文件继续保存在 Vault 中；每份附件对应一份普通 Markdown 元数据文档。短字段放在 Properties，长篇 OCR、Markdown、LaTeX 和说明放在正文。插件不提供 OCR 服务，不下载远程图片，也不会修改图片、PDF 或其他附件的二进制内容。
 
@@ -9,7 +9,7 @@
 1. 将构建后的 `main.js`、`manifest.json`、`styles.css` 放入 `<Vault>/.obsidian/plugins/attachments-library-peng/`，在社区插件中启用 **Attachments Library Peng**。原 `attachments-library` 插件目录保持独立；同一 Vault 请只启用一个负责写入这组索引的版本。
 2. 启动只读建立关联表和引用状态，**不会**自动创建 Base、补建索引或改写现有 Library 文档。
 3. 在设置中选择全 Vault 或单文件夹范围，以及扩展名白名单。默认全 Vault，默认白名单包括图片、音频、视频、PDF；可自行加入其他附件类型。Markdown 及其变体、Bases、Canvas 会从白名单中移除；隐藏路径和 Library 目录同样不能作为附件索引。
-4. 运行 **Open, create or upgrade attachment library**。已有 `Attachments Library.base` 会先备份，再追加/维护插件自己的四个视图；原全局过滤、排序、表格、CMS 和未知配置保留。新 Base 同时包含原生表格。
+4. 运行 **Open, create or upgrade attachment library**。已有 `Attachments Library.base` 按归属标记打开附件管理视图，保留原配置；缺少插件视图时先确认、备份，再追加。新 Base 同时包含原生表格。整理旧名称或扩展查询范围请运行“整理附件管理视图与范围（预览）”，确认后才应用；被业务笔记引用的旧视图名保留。
 5. 运行 **Scan and index attachments (preview first)**，检查完整的新建路径清单后确认。取消不会写入索引或改变初始化状态。首次确认的完整扫描成功后，才允许为以后新增的附件自动建索引，并采用现有索引的 `al_*` 派生字段。
 
 尚未完成全量扫描时，可运行 **Create metadata for active attachment**，或点击未索引图片的按钮后确认，仅为单个附件建立索引。它不会启用全库自动补建，也不会修改其他旧索引；这个显式新建索引可持续更新自己的派生状态。
@@ -37,7 +37,7 @@
 
 ## 图片按钮
 
-在阅读模式和 Live Preview 的本地图片嵌入右上角提供一个链接按钮。解析时使用当前来源文档上下文，支持短链接、别名和尺寸；原图片选择、缩放行为保留在图片本身。
+在阅读模式和 Live Preview 的本地图片右边线居中提供一个小链接按钮。解析时使用当前来源文档上下文，支持短链接、别名和尺寸；可见按钮 20×20px，点击区域 24×24px，向图片内侧偏移 4px。进入图片显示，离开后延迟 200ms 隐藏；可关闭自动隐藏。键盘焦点和无悬浮设备始终可用，减少动态效果时无淡入淡出。原图片选择、缩放行为保留在图片本身。
 
 | 操作 | 默认行为 |
 | --- | --- |
@@ -45,7 +45,8 @@
 | Cmd/Ctrl + 左键 | 使用系统分发打开元数据的 `source` URL |
 | 中键 | 新标签打开索引 |
 | 右键 | 选择打开索引、索引新标签、来源 URL |
-| 悬停 | 发出指向索引的标准 `hover-link` 事件 |
+| Command/Ctrl + 悬停按钮 | 仅预览索引 Markdown；支持先按键和后按键 |
+| Command/Ctrl + 悬停图片本体 | 保留原图的原生悬浮行为 |
 
 缺少或不安全的 `source` 会提示，不会误开其他目标；支持 HTTP、HTTPS 与应用 URL scheme，拒绝 `javascript:`、`data:` 等执行或内嵌内容 URI。设置中可以把 Cmd/Ctrl 点击切回原生内部链接行为。尚无索引时点击会明确提出单项创建，悬停始终不创建。
 
@@ -53,33 +54,33 @@
 
 ## 附件库视图
 
-插件注册的 Bases 视图类型为 `attachments-library-peng`，包括 All attachments、Orphan candidates、Cleanable、Needs attention 四个受管理视图。它们使用 Bases 提供的查询结果、排序和分组，并在结果内按当前引用状态筛选。旧的 `al_usageState` 快照不会让实时 `unknown` 项混入可清理项。
+插件注册的 Bases 视图类型为 `attachments-library-peng`，新建时包括“附件管理”“孤儿候选”“待清理”“异常与待检查”四个受管理视图；现有旧视图名称保留。它们使用 Bases 提供的查询结果、排序和分组，并在结果内按当前引用状态筛选。旧的 `al_usageState` 快照不会让实时 `unknown` 项混入可清理项。
 
 默认每页 60 项。换页或 Bases 数据/过滤变化会清空选择；复选框支持单项和当前页全选。图片缩略图懒加载；PDF、音频、视频默认显示图标，点击单项预览才创建对应媒体控件。标题打开索引。卡片提供引用详情、人工保留与手动刷新。
 
-只有标准 `file-menu` 被追加安全的单项操作；插件不读取任何其他插件的私有选择状态。
+工具栏显示本 Base 查询记录数、识别的索引数、当前选择数和查询范围。“已建立索引”不等于 Vault 所有附件。只有标准 `file-menu` 被追加安全的单项操作与“在附件管理中查看”；插件不读取任何其他插件的私有选择状态。
 
 ## 引用口径与保护状态
 
 候选范围即使是单文件夹，来源扫描也覆盖整个 Vault：
 
-- Markdown 正文链接、嵌入、前言链接按来源上下文交给 `metadataCache.getFirstLinkpathDest` 解析。
+- Markdown 使用语法树区分普通链接、引用式链接、Wikilink 与数学、代码、注释；数学和代码示例不计业务引用。正文链接、嵌入、前言链接按来源上下文交给 `metadataCache.getFirstLinkpathDest` 解析。
 - 只排除配套索引自身的自动 `attachment` 属性和受控预览块。旧索引中唯一、可明确识别的独立原图预览可排除；歧义会保守标为 `unknown`。索引正文中真正的其他引用仍计入。
 - 引用索引文档同样保护原附件；一个来源同时引用原附件和索引只计一次。
 - Canvas 的 `file` 节点和文本节点内显式 Markdown 链接纳入；包含空格的尖括号路径、嵌套/转义括号、引用式链接定义均有回归测试。
-- Base 的普通查询/卡片展示不算引用。显式 wiki/Markdown 链接和常量 `link()` / `image()` 纳入；动态公式无法判断本地目标时保持 `unknown`。
+- Base 的普通查询/卡片展示不算引用。独立显式本地链接及 `link()` / `image()` / `file()` 目标纳入。公式支持常量、普通属性、公式别名、`if()` 的有限分析；显示文字或图标不影响目标判断。以全部 Markdown 属性快照作为行范围上界，属性变化重新分析；不执行公式代码。无法判断的目标保留结构化保护原因。
 - 空 Base 没有引用；损坏的 Base/Canvas、读失败、缓存待就绪/过期、无法可靠解析的本地 Markdown 或 HTML 资源引用会保守阻止清理。
 
 引用扫描按来源保存正向/反向集合，变动采用 300ms 去抖增量刷新，并串行执行；卡片不会各自全 Vault 扫描。删除前重新扫描。新正文、前言属性链接会补充解析；来源发生变化而缓存仍旧时不能判定为孤儿。
 
-`unknown` 是保护状态。例如 Vault 内有无法界定目标的动态 Base 公式，可能令全库暂时不能清理；不会为了方便删除而把它当零引用。保守原文解析也可能把代码示例中的显式链接计作引用，产生额外保留项。人工先查看引用详情、修复来源或缓存后刷新。
+`unknown` 是保护状态。例如 Vault 内有无法界定目标的动态 Base 公式，可能令全库暂时不能清理；不会为了方便删除而把它当零引用。已有已知引用时显示 `used` 并额外展示检查完整度；仅完整且零业务引用时显示 `orphan`。人工先查看引用详情、修复来源或缓存后刷新。
 
 ## 两种人工删除操作
 
 - **Delete metadata only**：只移动索引到回收站，保留原附件；索引有入链时拒绝。
 - **Delete attachment + metadata**：同时移动附件和索引；原附件或索引有引用、保留标记、冲突、未知状态、超范围或非唯一关联时拒绝。
 
-受保护项默认跳过，预览显示保留原因；全被保护时只显示阻止原因。预览列出准确文件路径，并提醒元数据正文包含 OCR 或说明。确认之后再次检查完整引用、关联代次、目标 mtime、大小、SHA-256，以及未保存的 Markdown 编辑器；任何变化都会中止或停止后续项，不保存笔记。
+受保护项默认跳过，仍可查看完整预览；全被保护时禁用确认按钮。预览列出全部关联索引、业务引用来源与可用行号/属性/Canvas 节点/Base 公式、排除的自动关联、OCR/正文提醒、保护原因及实际回收路径。仅删索引只要求索引入链检查完整且为零，附件直接使用本身不阻止此操作；成对删除要求两者均完整且为零。确认后核对与所选项相关的安全快照、目标 mtime、大小、SHA-256，以及未保存编辑器；无关纯文本修改不会仅因全局代次变化阻止删除。不会自动保存笔记。
 
 成对删除串行执行：先附件，再索引，使用 `app.vault.trash(file, false)` 移到 Vault 本地 `.trash`。附件失败不动索引；索引失败时保留其文档和 `missing` 关联，报告 `partial`。每一对开始前再次检查，中途新增引用会保护尚未执行的项。事务 token 防重复执行；没有永久删除、父目录删除、自动重试或自动续删。
 

@@ -48,7 +48,7 @@ export class Setting {
     setHeading() { return this; }
     addText(cb: any) { const text: any = { setPlaceholder: () => text, setValue: () => text, onChange: (fn: any) => { this.textCallbacks.push(fn); return text; } }; cb(text); return this; }
     addToggle(cb: any) { const toggle: any = { setValue: () => toggle, onChange: (fn: any) => { this.toggleCallbacks.push(fn); return toggle; } }; cb(toggle); return this; }
-    addButton(cb: any) { const button: any = { setButtonText: () => button, setCta: () => button, onClick: (fn: any) => { this.buttonCallbacks.push(fn); return button; } }; cb(button); return this; }
+    addButton(cb: any) { const button: any = { setButtonText: () => button, setCta: () => button, setDisabled: () => button, onClick: (fn: any) => { this.buttonCallbacks.push(fn); return button; } }; cb(button); return this; }
     addDropdown(cb: any) { const drop: any = { setValue: () => drop, addOptions: () => drop, onChange: (fn: any) => { this.dropdownCallbacks.push(fn); return drop; } }; cb(drop); return this; }
 }
 export const noticeMessages: string[] = [];

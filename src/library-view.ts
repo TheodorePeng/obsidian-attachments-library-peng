@@ -5,6 +5,7 @@ import { SidecarManager } from './sidecar-manager';
 import { DeletionService, DeleteMode } from './deletions';
 import { classifyMedia } from './file-policy';
 import { confirmAction } from './dialogs';
+import { confirmDeletion, showReferenceDetails } from './delete-preview';
 import { VIEW_TYPE } from './bases-creator';
 export interface LibraryServices {
     registry: AttachmentRegistry;
@@ -62,12 +63,7 @@ export function previewAttachment(app: App, record: AttachmentRecord): void {
 export async function requestDeletion(app: App, services: LibraryServices, paths: string[], mode: DeleteMode): Promise<void> {
     try {
         const plan = await services.deletions.prepare(paths, mode);
-        if (!await confirmAction(app, mode === 'pair' ? 'Delete attachments and metadata' : 'Delete metadata only', [
-            'Files will move to the Vault .trash folder. Reference checks run again after confirmation.',
-            ...plan.skipped.map(s => 'Protected, kept: ' + s.path + ' — ' + s.reason),
-            ...plan.targets.flatMap(t => [...t.files.map(f => f.path), ...(t.hasUserBody ? ['This metadata document contains body text (OCR or notes).'] : [])]),
-        ], 'Move selected files to trash'))
-            return;
+        if (!await confirmDeletion(app, plan)) return;
         const result = await services.deletions.execute(plan);
         await confirmAction(app, 'Deletion ' + result.status, [result.message, ...result.steps.map(s => s.status + ': ' + s.path + ' — ' + s.recovery)], 'Close');
     }
@@ -90,6 +86,10 @@ export class AttachmentsLibraryView extends BasesView {
             const state = this.services.references.getUsage(row.record).state;
             return mode === 'orphan' ? state === 'orphan' : mode === 'cleanable' ? state === 'orphan' && row.record.metadata.al_keep !== true : mode === 'problems' ? ['unknown', 'missing', 'conflict', 'excluded'].includes(state) : true;
         });
+        const queryCount = this.data.groupedData.reduce((n, group) => n + group.entries.length, 0);
+        const indexedCount = this.data.groupedData.reduce((n, group) => n + group.entries.filter(entry => this.record(entry)).length, 0);
+        this.container.createEl('h3', { text: '附件管理：支持选择与安全删除' });
+        this.container.createDiv({ text: '仅显示当前 Base 查询命中的索引；已建立索引不代表全 Vault 已完成补建。', cls: 'alp-manager-intro' });
         const visible = this.selection.slice(rows);
         const toolbar = this.container.createDiv({ cls: 'alp-toolbar' });
         button(toolbar, 'Refresh references', () => { void this.services.refreshUsage().then(() => this.render()); });
@@ -98,7 +98,7 @@ export class AttachmentsLibraryView extends BasesView {
         selectAll.checked = visible.length > 0 && visible.every(r => selected.has(r.entry.file.path));
         selectAll.addEventListener('change', () => { for (const row of visible)
             this.selection.toggle(row.entry.file.path, selectAll.checked); this.render(); });
-        toolbar.createSpan({ text: `${selected.size} selected · ${rows.length} attachments` });
+        toolbar.createSpan({ text: `${selected.size} selected · ${rows.length} attachments · 查询 ${queryCount} 条 / 附件索引 ${indexedCount} 条 / 全库已识别 ${this.services.registry.byIndex.size} 条` });
         const metadata = button(toolbar, 'Delete metadata only', () => { void requestDeletion(this.app, this.services, [...selected], 'metadata-only').then(() => { this.selection.reset(); this.render(); }); });
         metadata.disabled = !selected.size;
         const pair = button(toolbar, 'Delete attachment + metadata', () => { void requestDeletion(this.app, this.services, [...selected], 'pair').then(() => { this.selection.reset(); this.render(); }); });
@@ -128,7 +128,7 @@ export class AttachmentsLibraryView extends BasesView {
             link.addEventListener('click', event => { event.preventDefault(); if (record.index)
                 void this.app.workspace.getLeaf(event.metaKey || event.ctrlKey ? 'tab' : false).openFile(record.index); });
             details.createDiv({ text: record.assetPath, cls: 'alp-path' });
-            button(details, `${usage.state} · ${usage.count} sources`, () => { void confirmAction(this.app, 'Reference details', [...usage.sources, ...usage.reasons, record.reason].filter(Boolean), 'Close'); });
+            button(details, `${usage.state} · ${usage.count} sources${!usage.assetCheckComplete || !usage.indexCheckComplete ? ' · 待检查' : ''}`, () => showReferenceDetails(this.app, { assetPath: record.assetPath, indexPaths: record.indexPaths ?? [record.indexPath!], usage, hasUserBody: false, blockedReason: record.reason }));
             const keep = details.createEl('label', { cls: 'alp-keep' });
             const keepInput = keep.createEl('input', { attr: { type: 'checkbox' } });
             keepInput.checked = record.metadata.al_keep === true;

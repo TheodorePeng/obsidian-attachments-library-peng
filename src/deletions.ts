@@ -1,6 +1,6 @@
 import { App, MarkdownView, TFile } from 'obsidian';
 import { AttachmentRegistry, AttachmentRecord } from './registry';
-import { ReferenceService } from './references';
+import { ReferenceService, Usage } from './references';
 import { isEligiblePath } from './file-policy';
 export type DeleteMode = 'metadata-only' | 'pair';
 interface Fingerprint {
@@ -14,6 +14,14 @@ export interface DeleteTarget {
     indexPath: string;
     files: Fingerprint[];
     hasUserBody: boolean;
+    safetySnapshot: string;
+}
+export interface DeleteReview {
+    assetPath: string;
+    indexPaths: string[];
+    usage?: Usage;
+    blockedReason?: string;
+    hasUserBody: boolean;
 }
 export interface DeletePlan {
     token: string;
@@ -21,6 +29,7 @@ export interface DeletePlan {
     generation: number;
     referenceGeneration: number;
     targets: DeleteTarget[];
+    reviews: DeleteReview[];
     skipped: {
         path: string;
         reason: string;
@@ -42,6 +51,8 @@ export class DeletionService {
     isActive: () => boolean = () => true;
     private issued = new Map<string, string>();
     private busy = false;
+    private ownedPaths = new Set<string>();
+    ownsPath(path: string): boolean { return this.ownedPaths.has(path); }
     private async persistLog(result: DeleteResult, plan: DeletePlan): Promise<boolean> {
         const root = this.app.vault.configDir + '/plugins/attachments-library-peng';
         const adapter = this.app.vault.adapter;
@@ -77,10 +88,12 @@ export class DeletionService {
     }
     private assertAllowed(record: AttachmentRecord, mode: DeleteMode): void {
         const usage = this.references.getUsage(record);
-        if (record.conflict || record.metadata.al_keep === true || usage.state === 'unknown' || usage.state === 'excluded')
+        if (record.conflict || record.metadata.al_keep === true || usage.state === 'excluded')
             throw new Error('Protected attachment: ' + record.assetPath + ' (' + usage.state + ')');
         if (!record.index || !record.indexPath)
             throw new Error('No unique metadata index: ' + record.assetPath);
+        if (!usage.indexCheckComplete || (mode === 'pair' && !usage.assetCheckComplete))
+            throw new Error('Reference checks incomplete: ' + usage.reasons.join('; '));
         if (usage.indexSources.length)
             throw new Error('Metadata document is referenced: ' + record.indexPath);
         if (mode === 'pair' && (usage.count > 0 || !record.asset || !isEligiblePath(record.assetPath, this.registry.settings)))
@@ -102,6 +115,7 @@ export class DeletionService {
         await this.registry.refresh();
         await this.references.refresh();
         const targets: DeleteTarget[] = [];
+        const reviews: DeleteReview[] = [];
         const skipped: {
             path: string;
             reason: string;
@@ -116,21 +130,23 @@ export class DeletionService {
             if (seen.has(record.assetPath))
                 continue;
             seen.add(record.assetPath);
+            const indexPaths = record.indexPaths ?? (record.indexPath ? [record.indexPath] : []);
+            const hasUserBody = record.index ? !!(await this.app.vault.cachedRead(record.index)).replace(/^---\r?\n[\s\S]*?\r?\n---/, '').replace(/<!-- alp:preview:start -->[\s\S]*?<!-- alp:preview:end -->/g, '').trim() : false;
+            const review: DeleteReview = { assetPath: record.assetPath, indexPaths, usage: this.references.getUsage(record), hasUserBody };
+            reviews.push(review);
             try {
                 this.assertAllowed(record, mode);
             }
             catch (error) {
-                skipped.push({ path, reason: error instanceof Error ? error.message : 'Protected' });
+                review.blockedReason = error instanceof Error ? error.message : 'Protected';
+                skipped.push({ path, reason: review.blockedReason });
                 continue;
             }
             const index = record.index!;
             const files = mode === 'pair' ? [record.asset!, index] : [index];
-            const body = await this.app.vault.cachedRead(index);
-            targets.push({ assetPath: record.assetPath, indexPath: index.path, files: await Promise.all(files.map(file => this.fingerprint(file))), hasUserBody: !!body.replace(/^---\r?\n[\s\S]*?\r?\n---/, '').replace(/<!-- alp:preview:start -->[\s\S]*?<!-- alp:preview:end -->/g, '').trim() });
+            targets.push({ assetPath: record.assetPath, indexPath: index.path, files: await Promise.all(files.map(file => this.fingerprint(file))), hasUserBody, safetySnapshot: this.references.safetySnapshot(record, mode) });
         }
-        if (!targets.length)
-            throw new Error(skipped.map(s => s.path + ': ' + s.reason).join('\n') || 'Select at least one attachment');
-        const plan: DeletePlan = { token: window.crypto.randomUUID(), mode, generation: this.registry.generation, referenceGeneration: this.references.generation, targets, skipped };
+        const plan: DeletePlan = { token: window.crypto.randomUUID(), mode, generation: this.registry.generation, referenceGeneration: this.references.generation, targets, skipped, reviews };
         this.issued.set(plan.token, JSON.stringify(plan));
         return plan;
     }
@@ -138,19 +154,20 @@ export class DeletionService {
         const steps: DeleteStep[] = [];
         if (!this.isActive() || this.busy || this.issued.get(plan.token) !== JSON.stringify(plan))
             return { status: 'aborted', steps, message: 'Expired, changed or already consumed plan' };
+        if (!plan.targets.length) return { status: 'aborted', steps, message: 'No eligible files. Review protected items.' };
         this.busy = true;
+        this.ownedPaths = new Set(plan.targets.flatMap(target => [target.assetPath, target.indexPath]));
         this.issued.delete(plan.token);
         try {
             await this.assertCleanEditors();
             await this.registry.refresh();
             await this.references.refresh();
-            if (plan.generation !== this.registry.generation || plan.referenceGeneration !== this.references.generation)
-                throw new Error('References or associations changed; preview again');
             for (const target of plan.targets) {
                 const record = this.registry.records.get(target.assetPath);
                 if (!record || record.indexPath !== target.indexPath)
                     throw new Error('Association changed');
                 this.assertAllowed(record, plan.mode);
+                if (target.safetySnapshot !== this.references.safetySnapshot(record, plan.mode)) throw new Error('Relevant references or associations changed; preview again');
                 for (const fingerprint of target.files) {
                     const file = this.app.vault.getFileByPath(fingerprint.path);
                     if (!file || JSON.stringify(await this.fingerprint(file)) !== JSON.stringify(fingerprint))
@@ -169,6 +186,7 @@ export class DeletionService {
                 if (!current || current.indexPath !== target.indexPath)
                     throw new Error('Association changed during transaction');
                 this.assertAllowed(current, plan.mode);
+                if (target.safetySnapshot !== this.references.safetySnapshot(current, plan.mode)) throw new Error('Relevant references changed during transaction');
                 for (const fingerprint of target.files) {
                     const file = this.app.vault.getFileByPath(fingerprint.path);
                     if (!file || JSON.stringify(await this.fingerprint(file)) !== JSON.stringify(fingerprint))
@@ -179,6 +197,8 @@ export class DeletionService {
                     if (!this.isActive())
                         throw new Error('Plugin is stopped');
                     try {
+                        const file = this.app.vault.getFileByPath(fingerprint.path);
+                        if (!file || JSON.stringify(await this.fingerprint(file)) !== JSON.stringify(fingerprint)) throw new Error('File changed before trash: ' + fingerprint.path);
                         await this.app.vault.trash(this.app.vault.getFileByPath(fingerprint.path)!, false);
                     }
                     catch {
@@ -206,6 +226,7 @@ export class DeletionService {
         }
         finally {
             this.busy = false;
+            this.ownedPaths.clear();
             await this.registry.refresh();
             await this.references.refresh();
         }

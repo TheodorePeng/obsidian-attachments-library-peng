@@ -1,9 +1,9 @@
 {
   "id": "attachments-library-peng",
   "name": "Attachments Library Peng",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minAppVersion": "1.13.1",
   "description": "Vault attachment metadata, reference-aware library and guarded cleanup.",
-  "author": "Jos\u00e9 Compadre Junior",
+  "author": "José Compadre Junior",
   "isDesktopOnly": false
 }

@@ -6,6 +6,7 @@ export const PREVIEW_END = '<!-- alp:preview:end -->';
 export interface AttachmentRecord {
     assetPath: string;
     indexPath?: string;
+    indexPaths?: string[];
     asset?: TFile;
     index?: TFile;
     metadata: Record<string, unknown>;
@@ -80,6 +81,8 @@ export class AttachmentRegistry {
                 other.reason = record.reason;
                 records.set(resolved, other);
             }
+            record.indexPaths ??= [];
+            record.indexPaths.push(index.path);
             record.indexPath ??= index.path;
             record.index ??= index;
             record.metadata = metadata;

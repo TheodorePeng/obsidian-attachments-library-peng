@@ -3,6 +3,7 @@ export type UsageState = "unknown" | "used" | "orphan" | "missing" | "conflict" 
 export interface AttachmentsLibrarySettings {
     indexScope: "vault" | "folder";
     initialScanComplete: boolean;
+    imageButtonAutoHide: boolean;
     imageClickMode: "index" | "nativeCmdClick";
     attachmentsFolder: string;
     libraryFolder: string;
@@ -48,6 +49,7 @@ export const DEFAULT_SETTINGS: AttachmentsLibrarySettings = {
     indexScope: "vault",
     initialScanComplete: false,
     imageClickMode: "index",
+    imageButtonAutoHide: true,
     attachmentsFolder: "Attachments",
     libraryFolder: "Library",
     watchedExtensions: [...DEFAULT_EXTENSIONS],
