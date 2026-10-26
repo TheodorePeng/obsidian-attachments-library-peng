@@ -1,3 +1,4 @@
+import { managedIssues } from './managed-properties';
 import { App, TFile, normalizePath, parseYaml } from 'obsidian';
 import { AttachmentsLibrarySettings, UsageState } from './types';
 import { isEligiblePath } from './file-policy';
@@ -35,9 +36,16 @@ export class AttachmentRegistry {
     records = new Map<string, AttachmentRecord>();
     byIndex = new Map<string, AttachmentRecord>();
     generation = 0;
+    private documents = new Map<string, { file: TFile; token: string; metadata: Record<string, unknown>; failed: boolean }>();
+    private dirty = new Set<string>();
+    mappingComplete = true;
+    metadataSnapshot(): [string, Record<string, unknown>][] { return [...this.documents].map(([path, entry]) => [path, entry.metadata]); }
+    invalidate(path: string): void { this.dirty.add(path); }
     private knownIndexes = new WeakSet<TFile>();
     constructor(private app: App, public settings: AttachmentsLibrarySettings) { }
-    async refresh(): Promise<void> {
+    async refresh(full = false): Promise<void> {
+        if (full) this.documents.clear();
+        this.mappingComplete = true;
         const records = new Map<string, AttachmentRecord>();
         const byIndex = new Map<string, AttachmentRecord>();
         const files = this.app.vault.getFiles();
@@ -48,25 +56,31 @@ export class AttachmentRegistry {
             if (isEligiblePath(file.path, this.settings))
                 records.set(file.path, this.record(file.path, file));
         }
-        for (const index of files.filter(f => f.extension === 'md')) {
-            let metadata: Record<string, unknown>;
-            try {
-                metadata = readDocument(await this.app.vault.cachedRead(index)).metadata;
+        const live = new Set(files.filter(f => f.extension.toLowerCase() === 'md').map(f => f.path));
+        for (const path of this.documents.keys()) if (!live.has(path)) this.documents.delete(path);
+        for (const index of files.filter(f => f.extension.toLowerCase() === 'md')) {
+            let token: string;
+            try { token = JSON.stringify([index.stat.mtime, index.stat.size, this.app.metadataCache.getFileCache(index)?.frontmatter]); } catch { token = JSON.stringify([index.stat.mtime, index.stat.size, 'cache-unavailable']); }
+            let entry = this.documents.get(index.path);
+            if (!entry || entry.file !== index || entry.token !== token || this.dirty.has(index.path)) {
+                let content: string | undefined;
+                try { content = await this.app.vault.cachedRead(index); entry = { file: index, token, metadata: readDocument(content).metadata, failed: false }; }
+                catch { entry = { file: index, token, metadata: entry?.metadata ?? {}, failed: content === undefined || /(?:_filePath|al_schema)\s*:/.test(content) }; }
+                this.documents.set(index.path, entry);
             }
-            catch {
+            this.dirty.delete(index.path);
+            if (entry.failed) this.mappingComplete = false;
+            const metadata = entry.metadata;
+            const inferredPath = typeof metadata._filePath === 'string' && metadata._filePath ? metadata._filePath : metadata.al_schema === 2 ? linkPath(metadata.attachment) : null;
+            if (!inferredPath) { if (metadata.al_schema === 2) this.mappingComplete = false; continue; }
+            if (!index.path.startsWith(this.settings.libraryFolder + '/') && metadata.al_schema !== 1 && metadata.al_schema !== 2 && !this.settings.legacyIndexPaths?.includes(index.path) && !this.knownIndexes.has(index))
                 continue;
-            }
-            if (typeof metadata._filePath !== 'string' || !metadata._filePath)
-                continue;
-            if (!index.path.startsWith(this.settings.libraryFolder + '/') && metadata.al_schema !== 1 && !this.knownIndexes.has(index))
-                continue;
-            const assetPath = normalizePath(metadata._filePath);
+            const assetPath = normalizePath(inferredPath);
             const raw = linkPath(metadata.attachment);
-            if (!raw)
-                continue;
+            if (!raw && metadata.al_schema !== 2) continue;
             // A full attachment path remains authoritative when Obsidian falls
             // back to a same-named Markdown index after the binary is removed.
-            const resolved = raw === assetPath ? assetPath : this.app.metadataCache.getFirstLinkpathDest(raw, index.path)?.path ?? raw;
+            const resolved = !raw || raw === assetPath ? assetPath : this.app.metadataCache.getFirstLinkpathDest(raw, index.path)?.path ?? raw;
             const existing = records.get(assetPath);
             const record = existing ?? this.record(assetPath, this.app.vault.getFileByPath(assetPath) ?? undefined);
             if (existing?.indexPath) {
@@ -86,6 +100,8 @@ export class AttachmentRegistry {
             record.indexPath ??= index.path;
             record.index ??= index;
             record.metadata = metadata;
+            const issues = managedIssues(metadata);
+            if (entry.failed || issues.length) { record.conflict = true; record.reason = entry.failed ? 'Index cannot be read safely' : issues.join('; '); }
             records.set(assetPath, record);
             byIndex.set(index.path, record);
             this.knownIndexes.add(index);

@@ -1,4 +1,4 @@
-const LOCKED = new Set(['attachment', '_filePath', '_fileType', '_heuristic', 'al_schema', 'al_usageCount', 'al_usageState', '__proto__', 'constructor', 'prototype']);
+const LOCKED = new Set(['attachment', '_filePath', '_fileType', 'al_schema', 'al_usageCount', 'al_usageState', '__proto__', 'constructor', 'prototype']);
 export function notePropertyKey(id: string): string | null {
     if (id.startsWith('file.') || id.startsWith('formula.')) return null;
     return id.startsWith('note.') ? id.slice(5) : id;

@@ -15,8 +15,8 @@ describe('DEFAULT_SETTINGS', () => {
         expect(DEFAULT_SETTINGS.watchedExtensions).toContain('.png');
         expect(DEFAULT_SETTINGS.watchedExtensions).toContain('.mp4');
     });
-    it('autoCreateOnNew is true', () => {
-        expect(DEFAULT_SETTINGS.autoCreateOnNew).toBe(true);
+    it('autoCreateOnNew starts disabled', () => {
+        expect(DEFAULT_SETTINGS.autoCreateOnNew).toBe(false);
     });
     it('autoDeleteOnRemove is false', () => {
         expect(DEFAULT_SETTINGS.autoDeleteOnRemove).toBe(false);
@@ -24,8 +24,8 @@ describe('DEFAULT_SETTINGS', () => {
     it('mirrorFolderStructure is true', () => {
         expect(DEFAULT_SETTINGS.mirrorFolderStructure).toBe(true);
     });
-    it('enablePdfMetadataExtraction is true', () => {
-        expect(DEFAULT_SETTINGS.enablePdfMetadataExtraction).toBe(true);
+    it('legacy PDF extraction starts disabled', () => {
+        expect(DEFAULT_SETTINGS.enablePdfMetadataExtraction).toBe(false);
     });
     it('enableDoiIsbnLookup is false', () => {
         expect(DEFAULT_SETTINGS.enableDoiIsbnLookup).toBe(false);
@@ -37,32 +37,4 @@ describe('DEFAULT_SETTINGS', () => {
         expect(DEFAULT_SETTINGS.tagsPropertyName).toBe('tags');
     });
 });
-describe('DEFAULT_METADATA', () => {
-    it('has empty title', () => {
-        expect(DEFAULT_METADATA.title).toBe('');
-    });
-    it('has empty author', () => {
-        expect(DEFAULT_METADATA.author).toBe('');
-    });
-    it('has empty tags array', () => {
-        expect(DEFAULT_METADATA.tags).toEqual([]);
-    });
-    it('has empty subject', () => {
-        expect(DEFAULT_METADATA.subject).toBe('');
-    });
-    it('has empty genre', () => {
-        expect(DEFAULT_METADATA.genre).toBe('');
-    });
-    it('has empty source', () => {
-        expect(DEFAULT_METADATA.source).toBe('');
-    });
-    it('has status "unread"', () => {
-        expect(DEFAULT_METADATA.status).toBe('unread');
-    });
-    it('has empty notes', () => {
-        expect(DEFAULT_METADATA.notes).toBe('');
-    });
-    it('has _heuristic false', () => {
-        expect(DEFAULT_METADATA._heuristic).toBe(false);
-    });
-});
+it('generates only user URL and keep defaults', () => { expect(DEFAULT_METADATA).toEqual({url:'',keep:false}); });

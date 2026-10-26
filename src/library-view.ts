@@ -1,3 +1,4 @@
+import { effectiveKeep } from './managed-properties';
 import { App, BasesView, BasesEntry, Menu, Modal, QueryController, setIcon, Notice, RenderContext, BasesPropertyId, NullValue, ListValue } from 'obsidian';
 import { AttachmentRegistry, AttachmentRecord } from './registry';
 import { ReferenceService } from './references';
@@ -128,7 +129,7 @@ export class AttachmentsLibraryView extends BasesView {
         return this.data.groupedData.flatMap((group, groupIndex) => group.entries.flatMap(entry => {
             const record = this.services.registry.byIndex.get(entry.file.path); if (!record) return [];
             const state = this.services.references.getUsage(record).state;
-            if (mode === 'orphan' && state !== 'orphan' || mode === 'cleanable' && (state !== 'orphan' || record.metadata.al_keep === true) || mode === 'problems' && !['unknown', 'missing', 'conflict', 'excluded'].includes(state)) return [];
+            if (mode === 'orphan' && state !== 'orphan' || mode === 'cleanable' && (state !== 'orphan' || effectiveKeep(record.metadata)) || mode === 'problems' && !['unknown', 'missing', 'conflict', 'excluded'].includes(state)) return [];
             const label = group.hasKey() ? group.key?.toString() ?? '' : '';
             return [{ entry, record, group: JSON.stringify([groupIndex, label]), groupLabel: label }];
         }));
@@ -229,7 +230,7 @@ export class AttachmentsLibraryView extends BasesView {
             const key = notePropertyKey(id);
             const fm = this.app.metadataCache.getFileCache(row.entry.file)?.frontmatter;
             const raw: unknown = key && fm && Object.prototype.hasOwnProperty.call(fm, key) ? fm[key] : undefined;
-            const boolean = typeof raw === 'boolean' || key === 'al_keep';
+            const boolean = typeof raw === 'boolean' || (key === 'al_keep' || key === 'keep');
             const empty = !boolean && (value == null || value instanceof NullValue || value instanceof ListValue && !value.isTruthy() || isEmptyGalleryValue(value.toString()));
             let cell = card.cells.get(id);
             if (empty && !this.options.showEmptyProperties) { if (cell) { this.disposeCell(cell); card.cells.delete(id); } continue; }
@@ -252,7 +253,7 @@ export class AttachmentsLibraryView extends BasesView {
                     const open = (event: MouseEvent) => { if (event.button !== 0 && event.button !== 1) return; event.preventDefault(); event.stopPropagation(); this.open(card.row, event.button === 1 || event.metaKey || event.ctrlKey); };
                     anchor.addEventListener('click', open); anchor.addEventListener('auxclick', open);
                 } else if (boolean && !isGalleryPropertyReadOnly(id)) {
-                    const input = output.createEl('input', { attr: { type: 'checkbox', 'aria-label': label } }); input.checked = raw === true || raw === undefined && value?.toString() === 'true';
+                    const input = output.createEl('input', { attr: { type: 'checkbox', 'aria-label': label } }); input.checked = key === 'keep' || key === 'al_keep' ? effectiveKeep(card.row.record.metadata) : raw === true || raw === undefined && value?.toString() === 'true';
                     input.addEventListener('click', event => event.stopPropagation());
                     input.addEventListener('change', () => { input.disabled = true; void this.edits.toggle(card.row.entry.file.path, id, input.checked).catch(error => { input.checked = !input.checked; new Notice(error instanceof Error ? error.message : '保存失败'); }).finally(() => { input.disabled = false; this.render(); }); });
                 } else {

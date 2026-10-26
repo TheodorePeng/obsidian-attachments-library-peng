@@ -4,7 +4,7 @@ import { GALLERY_DEFAULT_ORDER } from './gallery-config';
 export const VIEW_TYPE = 'attachments-library-peng';
 const OWNER = VIEW_TYPE + ':';
 export function upgradeBase(content: string, libraryFolder: string): string {
-    const parsed: unknown = content.trim() ? parseYaml(content) : { filters: { and: ['file.ext == "md"', { or: ['al_schema == 1', { and: [`file.inFolder(${JSON.stringify(libraryFolder)})`, '_filePath != null', 'attachment != null'] }] }] }, views: [{ type: 'table', name: 'Metadata table', order: ['file.name', 'title', 'source', 'status', 'al_usageState', 'al_keep'] }] };
+    const parsed: unknown = content.trim() ? parseYaml(content) : { filters: { and: ['file.ext == "md"', { or: ['al_schema == 1', 'al_schema == 2', { and: [`file.inFolder(${JSON.stringify(libraryFolder)})`, '_filePath != null', 'attachment != null'] }] }] }, views: [{ type: 'table', name: 'Metadata table', order: ['file.name', 'url', 'keep'] }] };
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
         throw new Error('Base must be a YAML mapping');
     const config = parsed as Record<string, unknown>;

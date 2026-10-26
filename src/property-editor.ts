@@ -36,7 +36,7 @@ export class GalleryPropertyEditor {
             });
             input.focus();
         };
-        if (draft.initial == null && draft.key !== 'al_keep') {
+        if (draft.initial == null && draft.key !== 'al_keep' && draft.key !== 'keep') {
             const type = element.createEl('select', { attr: { 'aria-label': '属性输入类型' } });
             for (const [kind, label] of Object.entries(KIND_LABELS)) type.createEl('option', { text: label, attr: { value: kind } });
             type.value = draft.kind;

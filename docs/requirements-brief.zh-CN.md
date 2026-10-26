@@ -1,3 +1,5 @@
+> 当前实施以 [1.4.0 方案](implementation-plan-1.4.0.zh-CN.md)及[验收记录](implementation-acceptance-1.4.0-2026-10-26.md)为准。下文保留早期讨论和实施历史。
+
 # Attachments Library Peng 开发需求简报
 
 日期：2026-10-23  

@@ -1,3 +1,4 @@
+import { effectiveKeep, managedIssues } from './managed-properties';
 import { App, MarkdownView, TFile } from 'obsidian';
 import { AttachmentRegistry, AttachmentRecord } from './registry';
 import { ReferenceService, Usage } from './references';
@@ -90,8 +91,10 @@ export class DeletionService {
     private assertAllowed(record: AttachmentRecord, mode: DeleteMode): void {
         const usage = this.references.getUsage(record);
         if ((record.indexPaths ?? (record.indexPath ? [record.indexPath] : [])).some(path => this.hasPendingEdits(path))) throw new Error('索引有未提交的卡片属性编辑，请先保存或取消');
-        if (record.conflict || record.metadata.al_keep === true || usage.state === 'excluded')
-            throw new Error('Protected attachment: ' + record.assetPath + ' (' + usage.state + ')');
+        if (effectiveKeep(record.metadata)) throw new Error('Protected by keep or legacy al_keep: ' + record.assetPath);
+        const propertyIssues = managedIssues(record.metadata);
+        if (record.conflict || propertyIssues.length > 0 || usage.state === 'excluded')
+            throw new Error('Protected attachment: ' + record.assetPath + ' — ' + (record.reason || propertyIssues.join('; ') || usage.state));
         if (!record.index || !record.indexPath)
             throw new Error('No unique metadata index: ' + record.assetPath);
         if (!usage.indexCheckComplete || (mode === 'pair' && !usage.assetCheckComplete))

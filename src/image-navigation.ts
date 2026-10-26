@@ -1,3 +1,4 @@
+import { effectiveUrl, isSafeUrl } from './managed-properties';
 import { App, editorInfoField, Menu, Notice } from 'obsidian';
 import { EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
 import { AttachmentRegistry, AttachmentRecord } from './registry';
@@ -15,17 +16,7 @@ export function routeImageAction(button: number, modifier: boolean, mode: Attach
         return mode === 'nativeCmdClick' ? 'native' : 'source';
     return 'index';
 }
-export function safeSource(value: unknown): value is string {
-    if (typeof value !== 'string' || !/^[a-z][a-z0-9+.-]*:/i.test(value.trim()))
-        return false;
-    try {
-        const url = new URL(value.trim());
-        return !['javascript:', 'data:', 'vbscript:', 'file:', 'blob:', 'about:', 'filesystem:', 'chrome:', 'devtools:', 'app:', 'resource:'].includes(url.protocol.toLowerCase());
-    }
-    catch {
-        return false;
-    }
-}
+export const safeSource = isSafeUrl;
 interface ImageControl {
     host: HTMLElement;
     anchor: HTMLAnchorElement;
@@ -243,8 +234,8 @@ export class ImageNavigation {
     }
     openSource(record?: AttachmentRecord): void {
         if (record?.conflict) { new Notice('附件关联冲突。'); return; }
-        if (!safeSource(record?.metadata.source)) { new Notice('索引中未设置有效出处 URL。'); return; }
-        window.open(record.metadata.source.trim(), '_blank');
+        if (!safeSource(record ? effectiveUrl(record.metadata) : undefined)) { new Notice('索引中未设置有效出处 URL。'); return; }
+        window.open(effectiveUrl(record!.metadata).trim(), '_blank');
     }
     private menu(event: MouseEvent, record: AttachmentRecord | undefined, path: string): void {
         new Menu().addItem(item => item.setTitle('打开索引').onClick(() => { void this.openIndex(path); })).addItem(item => item.setTitle('新标签打开索引').onClick(() => { void this.openIndex(path, true); })).addItem(item => item.setTitle('打开出处').onClick(() => this.openSource(record))).showAtMouseEvent(event);

@@ -1,3 +1,4 @@
+import { effectiveKeep } from './managed-properties';
 import { App, TFile, parseYaml } from 'obsidian';
 import { AttachmentRecord, AttachmentRegistry, PREVIEW_END, PREVIEW_START, readDocument } from './registry';
 import { UsageState } from './types';
@@ -28,19 +29,27 @@ export class ReferenceService {
     private reverse = new Map<string, Set<string>>();
     private metadata = new Map<string, Record<string, unknown>>();
     private parsed = new Map<string, { text: string; result: ReturnType<typeof parseMarkdownLinks> }>();
+    private sourceTexts = new Map<string, { text: string; mtime: number; size: number }>();
+    private reuseText = new Set<string>();
     private dirty = new Set<string>(); private waiting = new Set<string>();
     private cacheSnapshots = new Map<string, { text: string; cache: unknown }>();
     private changedText = new Map<string, string>();
     private timer?: number; private tail: Promise<void> = Promise.resolve(); private queued = 0; private disposed = false;
     constructor(private app: App, private registry: AttachmentRegistry) {}
-    markDirty(path: string): void { if (path.endsWith('.md')) this.waiting.add(path); this.schedule(path); }
+    markDirty(path: string): void { if (path.toLowerCase().endsWith('.md')) this.waiting.add(path); this.schedule(path); }
     cacheChanged(path: string, text: string): void { this.waiting.delete(path); this.changedText.set(path, text); this.schedule(path); }
     schedule(path: string): void {
         if (this.disposed) return;
-        this.dirty.add(path); this.pending = true; window.clearTimeout(this.timer);
+        this.reuseText.delete(path); this.dirty.add(path); this.pending = true; window.clearTimeout(this.timer);
         this.timer = window.setTimeout(() => { const paths = [...this.dirty]; this.dirty.clear(); void this.refresh(paths); }, 300);
     }
     dispose(): void { this.disposed = true; window.clearTimeout(this.timer); this.dirty.clear(); this.onRefreshed = undefined; }
+    invalidateResolution(): void { for (const path of this.sourceResults.keys()) { if (!this.dirty.has(path)) this.reuseText.add(path); this.dirty.add(path); } this.pending = true; }
+    async flushDirty(): Promise<void> {
+        await this.tail;
+        if (!this.ready) await this.refresh();
+        else if (this.dirty.size) await this.refresh([...this.dirty]);
+    }
     async refresh(paths?: string[]): Promise<void> {
         if (this.disposed) return;
         if (!paths) this.dirty.clear(); else paths.forEach(path => this.dirty.delete(path));
@@ -58,17 +67,17 @@ export class ReferenceService {
     }
     private async scan(paths?: string[]): Promise<void> {
         const before = this.signature();
-        const sources = this.app.vault.getFiles().filter(f => ['md', 'canvas', 'base'].includes(f.extension));
+        const sources = this.app.vault.getFiles().filter(f => ['md', 'canvas', 'base'].includes(f.extension.toLowerCase()));
         const alive = new Set(sources.map(f => f.path));
         for (const path of this.metadata.keys()) if (!alive.has(path)) this.metadata.delete(path);
         for (const path of this.sourceResults.keys()) if (!alive.has(path)) {
-            this.sourceResults.delete(path); this.waiting.delete(path); this.changedText.delete(path); this.cacheSnapshots.delete(path); this.parsed.delete(path);
+            this.sourceResults.delete(path); this.sourceTexts.delete(path); this.reuseText.delete(path); this.waiting.delete(path); this.changedText.delete(path); this.cacheSnapshots.delete(path); this.parsed.delete(path);
         }
         // Base formulas depend on row properties, so any Markdown change refreshes Base analysis.
-        const refreshBases = !paths || paths.some(p => p.endsWith('.md'));
-        const selected = sources.filter(f => !paths || paths.includes(f.path) || (refreshBases && f.extension === 'base'));
-        if (!paths) { this.sourceResults.clear(); this.metadata.clear(); }
-        selected.sort((a, b) => Number(a.extension === 'base') - Number(b.extension === 'base'));
+        const refreshBases = !paths || paths.some(p => p.toLowerCase().endsWith('.md'));
+        const selected = sources.filter(f => !paths || paths.includes(f.path) || (refreshBases && f.extension.toLowerCase() === 'base'));
+        if (!paths) { this.sourceResults.clear(); this.metadata.clear(); this.reuseText.clear(); }
+        selected.sort((a, b) => Number(a.extension.toLowerCase() === 'base') - Number(b.extension.toLowerCase() === 'base'));
         for (const file of selected) {
             try { this.sourceResults.set(file.path, await this.scanSource(file)); }
             catch { this.sourceResults.set(file.path, { targets: new Set(), occurrences: [], excluded: [], issues: [{ sourcePath: file.path, reason: 'Cannot read or parse source: ' + file.path, affectedPaths: null }] }); }
@@ -85,7 +94,9 @@ export class ReferenceService {
     }
     private async scanSource(file: TFile): Promise<SourceResult> {
         const result: SourceResult = { targets: new Set(), occurrences: [], issues: [], excluded: [] };
-        const text = await this.app.vault.cachedRead(file);
+        const cached = this.sourceTexts.get(file.path);
+        const text = this.reuseText.has(file.path) && cached && cached.mtime === file.stat.mtime && cached.size === file.stat.size && !this.waiting.has(file.path) ? cached.text : await this.app.vault.cachedRead(file);
+        this.reuseText.delete(file.path); this.sourceTexts.set(file.path, { text, mtime: file.stat.mtime, size: file.stat.size });
         const issue = (reason: string, affectedPaths: string[] | null = null) => result.issues.push({ sourcePath: file.path, reason, affectedPaths });
         const add = (raw: string, location: Partial<ReferenceOccurrence> = {}, sourceContext = file.path, excluded = false) => {
             if (isRemote(raw) || raw.startsWith('#')) return;
@@ -106,14 +117,14 @@ export class ReferenceService {
             for (const link of parsed.links) add(link.link, { kind: link.kind, line: link.line, ...location });
             if (parsed.uncertain) issue('Unsupported local HTML resource: ' + file.path);
         };
-        if (file.extension === 'canvas') {
+        if (file.extension.toLowerCase() === 'canvas') {
             const canvas = JSON.parse(text) as { nodes?: { id?: string; type?: string; file?: string; text?: string }[] };
             if (!Array.isArray(canvas?.nodes)) throw new Error('Invalid Canvas');
             for (const node of canvas.nodes) {
                 if (node.type === 'file' && typeof node.file === 'string') add(node.file, { kind: 'canvas', nodeId: node.id });
                 if (node.type === 'text' && typeof node.text === 'string') explicit(node.text, file.path + ':' + node.id, { kind: 'canvas', nodeId: node.id });
             }
-        } else if (file.extension === 'base') {
+        } else if (file.extension.toLowerCase() === 'base') {
             if (!text.trim()) return result;
             const config = parseYaml(text) as Record<string, unknown>;
             if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid Base');
@@ -181,6 +192,7 @@ export class ReferenceService {
         const sources = [...new Set([...assetSources, ...indexSources])].sort();
         const paths = [record.assetPath, ...indexes];
         const allIssues = [...this.sourceResults.values()].flatMap(r => r.issues);
+        if (!this.registry.mappingComplete) allIssues.push({ sourcePath: '(index inventory)', reason: 'Index inventory incomplete', affectedPaths: null });
         const issues = allIssues.filter(i => i.affectedPaths === null || i.affectedPaths.some(p => paths.includes(p)));
         const assetCheckComplete = this.ready && !this.pending && !issues.some(i => i.affectedPaths === null || i.affectedPaths.includes(record.assetPath));
         const indexCheckComplete = this.ready && !this.pending && !issues.some(i => i.affectedPaths === null || i.affectedPaths.some(p => indexes.includes(p)));
@@ -191,6 +203,6 @@ export class ReferenceService {
     }
     safetySnapshot(record: AttachmentRecord, mode: 'metadata-only' | 'pair'): string {
         const usage = this.getUsage(record);
-        return JSON.stringify({ assetPath: record.assetPath, indexPaths: record.indexPaths ?? [record.indexPath], conflict: record.conflict, keep: record.metadata.al_keep === true, indexSources: usage.indexSources, indexComplete: usage.indexCheckComplete, ...(mode === 'pair' ? { assetSources: usage.assetSources, assetComplete: usage.assetCheckComplete } : {}), issues: usage.issues.filter(i => i.affectedPaths === null || i.affectedPaths.some(p => mode === 'pair' ? p === record.assetPath || (record.indexPaths ?? [record.indexPath]).includes(p) : (record.indexPaths ?? [record.indexPath]).includes(p))).map(i => ({ sourcePath: i.sourcePath, reason: i.reason, paths: i.affectedPaths })) });
+        return JSON.stringify({ assetPath: record.assetPath, indexPaths: record.indexPaths ?? [record.indexPath], conflict: record.conflict, keep: effectiveKeep(record.metadata), indexSources: usage.indexSources, indexComplete: usage.indexCheckComplete, ...(mode === 'pair' ? { assetSources: usage.assetSources, assetComplete: usage.assetCheckComplete } : {}), issues: usage.issues.filter(i => i.affectedPaths === null || i.affectedPaths.some(p => mode === 'pair' ? p === record.assetPath || (record.indexPaths ?? [record.indexPath]).includes(p) : (record.indexPaths ?? [record.indexPath]).includes(p))).map(i => ({ sourcePath: i.sourcePath, reason: i.reason, paths: i.affectedPaths })) });
     }
 }

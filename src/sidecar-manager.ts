@@ -1,19 +1,21 @@
-import { App, TFile, normalizePath, stringifyYaml } from 'obsidian';
-import { AttachmentsLibrarySettings, AttachmentMetadata, DEFAULT_METADATA } from './types';
-import { PdfMetadataExtractor } from './pdf-extractor';
+import { newMetadata, managedIssues } from './managed-properties';
+import { App, MarkdownView, TFile, normalizePath, stringifyYaml } from 'obsidian';
+import { AttachmentsLibrarySettings } from './types';
+
 import { AttachmentRegistry, AttachmentRecord, PREVIEW_END, PREVIEW_START, readDocument } from './registry';
 import { isEligiblePath } from './file-policy';
 import type { ReferenceService, Usage } from './references';
 export class SidecarManager {
-    private pdfExtractor: PdfMetadataExtractor;
+    ensureTypes?: () => Promise<void>;
     readonly registry: AttachmentRegistry;
     references?: ReferenceService;
     isActive: () => boolean = () => true;
     private authorized = new Set<string>();
     constructor(private app: App, private settings: AttachmentsLibrarySettings, registry?: AttachmentRegistry) {
         this.registry = registry ?? new AttachmentRegistry(app, settings);
-        this.pdfExtractor = new PdfMetadataExtractor(app);
+
     }
+    authorize(path: string): void { this.authorized.add(path); }
     getSidecarPath(path: string): string {
         return this.registry.records.get(path)?.indexPath ?? normalizePath(`${this.settings.libraryFolder}/${path}.md`);
     }
@@ -22,6 +24,7 @@ export class SidecarManager {
         if (!this.isActive() || !isEligiblePath(file.path, this.settings))
             return;
         await this.registry.refresh();
+        await this.references?.flushDirty();
         const record = this.registry.records.get(file.path);
         if (record?.conflict)
             throw new Error(record.reason);
@@ -31,37 +34,25 @@ export class SidecarManager {
         if (this.app.vault.getFileByPath(path) || this.app.vault.getFiles().some(f => f.path.toLocaleLowerCase() === path.toLocaleLowerCase()))
             throw new Error('Index path collision: ' + path);
         await this.ensureFolder(path.split('/').slice(0, -1).join('/'));
-        const metadata: AttachmentMetadata = { ...DEFAULT_METADATA, tags: [], attachment: `[[${file.path}]]`, title: file.basename, created: this.date(file.stat.ctime), updated: this.date(file.stat.mtime), _fileType: file.extension, _filePath: file.path };
-        if (this.settings.enablePdfMetadataExtraction && file.extension === 'pdf') {
-            const extracted = await this.pdfExtractor.extract(file);
-            if (extracted.title) {
-                metadata.title = extracted.title;
-                metadata._heuristic = true;
-            }
-            if (extracted.author) {
-                metadata.author = extracted.author;
-                metadata._heuristic = true;
-            }
-            if (extracted.subject)
-                metadata.subject = extracted.subject;
-            metadata.tags = extracted.keywords.map(tag => this.sanitizeTag(tag)).filter(Boolean);
-        }
-        const fm: Record<string, unknown> = { ...metadata, al_schema: 1, al_usageCount: 0, al_usageState: 'unknown', al_keep: false };
-        if (this.settings.tagsPropertyName !== 'tags') {
-            fm[this.settings.tagsPropertyName] = fm.tags;
-            delete fm.tags;
-        }
+        if (!this.registry.mappingComplete) throw new Error('Attachment index inventory is incomplete');
+        await this.ensureTypes?.();
+        await this.registry.refresh();
+        const fresh = this.registry.records.get(file.path);
+        if (!this.registry.mappingComplete || fresh?.conflict) throw new Error(fresh?.reason || 'Index inventory incomplete');
+        if (fresh?.indexPath) return;
+        const fm = newMetadata(file.path);
         if (!this.isActive())
             return;
-        await this.app.vault.create(path, `---\n${stringifyYaml(fm)}---\n\n# ${metadata.title}\n\n${this.preview(file.path)}\n\n## OCR\n\n## 说明\n\n`);
+        await this.app.vault.create(path, `---\n${stringifyYaml(fm)}---\n\n${this.preview(file.path)}\n\n## OCR\n\n## 说明\n\n`);
         this.authorized.add(path);
         await this.registry.refresh();
         if (this.references) {
-            await this.references.refresh([path]);
+            this.references.schedule(path); this.references.invalidateResolution();
+            await this.references.flushDirty();
             await this.writeDerived(this.registry.records.get(file.path)!);
         }
     }
-    private date(value: number): string { return new Date(value).toISOString().split('T')[0]; }
+
     private preview(path: string): string { return `${PREVIEW_START}\n![[${path}]]\n${PREVIEW_END}`; }
     private async ensureFolder(path: string): Promise<void> {
         if (!this.isActive() || !path || this.app.vault.getAbstractFileByPath(path))
@@ -74,37 +65,45 @@ export class SidecarManager {
                 throw error;
         }
     }
+    private hasUnsavedEditor(file: TFile, text: string): boolean {
+        return this.app.workspace.getLeavesOfType('markdown').some(leaf => leaf.view instanceof MarkdownView && leaf.view.file === file && leaf.view.editor.getValue() !== text);
+    }
     async patch(record: AttachmentRecord, values: Record<string, unknown>): Promise<boolean> {
         if (!this.isActive() || !record.index || record.conflict)
             return false;
-        const current = readDocument(await this.app.vault.cachedRead(record.index)).metadata;
+        const text = await this.app.vault.cachedRead(record.index);
+        if (this.hasUnsavedEditor(record.index, text)) return false;
+        const current = readDocument(text).metadata;
+        const stat = { mtime: record.index.stat.mtime, size: record.index.stat.size };
         const changed = Object.keys(values).some(key => JSON.stringify(current[key]) !== JSON.stringify(values[key]));
         if (!changed)
             return false;
         if (!this.isActive())
             return false;
-        await this.app.fileManager.processFrontMatter(record.index, (fm: Record<string, unknown>) => Object.assign(fm, values));
+        await this.app.fileManager.processFrontMatter(record.index, (fm: Record<string, unknown>) => {
+            if (!this.isActive() || this.app.vault.getFileByPath(record.indexPath!) !== record.index || this.hasUnsavedEditor(record.index, text)) throw new Error('Unsaved index edits or stopped update');
+            if (record.index.stat.mtime !== stat.mtime || record.index.stat.size !== stat.size || [...new Set([...Object.keys(values), 'attachment', '_filePath'])].some(key => JSON.stringify(fm[key]) !== JSON.stringify(current[key]))) throw new Error('Index changed; update again after saving');
+            Object.assign(fm, values);
+        });
         Object.assign(record.metadata, values);
         return true;
     }
     async writeDerived(record: AttachmentRecord, snapshot?: Usage): Promise<boolean> {
-        if (!this.settings.initialScanComplete && !this.authorized.has(record.indexPath ?? ''))
+        if (!this.settings.initialScanComplete && record.metadata.al_schema !== 2 && !this.authorized.has(record.indexPath ?? ''))
             return false;
         const usage = snapshot ?? this.references?.getUsage(record);
-        const values = { al_schema: 1, al_keep: record.metadata.al_keep === true, al_usageCount: usage?.count ?? 0, al_usageState: usage?.state ?? this.registry.state(record) ?? 'unknown' };
+        if (managedIssues(record.metadata).length || this.references?.pending || usage?.reasons.some(reason => /Metadata cache (?:stale|pending)/.test(reason))) return false;
+        const values: Record<string, unknown> = { al_usageCount: usage?.count ?? 0, al_usageState: usage?.state ?? this.registry.state(record) ?? 'unknown' };
         if (Object.entries(values).every(([key, value]) => record.metadata[key] === value))
             return false;
         return this.patch(record, values);
     }
-    async updateSidecarDates(file: TFile): Promise<void> {
-        const record = this.registry.records.get(file.path);
-        if (record && (this.settings.initialScanComplete || this.authorized.has(record.indexPath ?? '')))
-            await this.patch(record, { updated: this.date(file.stat.mtime) });
-    }
+    async updateSidecarDates(_file: TFile): Promise<void> { /* User properties are not maintained by the plugin. */ }
     async renameSidecar(oldPath: string, newPath: string): Promise<void> {
         const record = this.registry.records.get(oldPath);
         if (!record?.index || record.conflict)
             return;
+        if (this.hasUnsavedEditor(record.index, await this.app.vault.cachedRead(record.index))) throw new Error('Unsaved index edits; save before updating the attachment');
         const other = this.registry.records.get(newPath);
         if (other?.indexPath && other.indexPath !== record.indexPath)
             throw new Error('Destination association conflict');
@@ -117,12 +116,12 @@ export class SidecarManager {
         if (start >= 0 && end >= start) {
             const updated = content.slice(0, start) + this.preview(newPath) + content.slice(end + PREVIEW_END.length);
             if (this.isActive() && updated !== content)
-                await this.app.vault.modify(record.index, updated);
+                await this.app.vault.process(record.index, current => { if (!this.isActive() || current !== content || this.hasUnsavedEditor(record.index!, current)) throw new Error('Index changed or has unsaved edits'); return updated; });
         }
         await this.registry.refresh();
     }
     async deleteSidecar(_attachmentPath: string): Promise<void> { await this.registry.refresh(); }
-    async setKeep(record: AttachmentRecord, value: boolean): Promise<void> { await this.patch(record, { al_keep: value }); }
+    async setKeep(record: AttachmentRecord, value: boolean): Promise<void> { await this.patch(record, record.metadata.al_schema === 2 ? { keep: value } : { al_keep: value }); }
     private sanitizeTag(raw: string): string { return raw.trim().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}\-_/]/gu, '').replace(/-{2,}/g, '-').replace(/^[-_]+|[-_]+$/g, ''); }
     async sanitizeSidecarTags(): Promise<number> {
         let count = 0;

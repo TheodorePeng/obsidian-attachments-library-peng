@@ -8,8 +8,8 @@
 /** Default note property order used by the gallery view. */
 export const GALLERY_DEFAULT_ORDER: readonly string[] = [
 	'file.name',
-	'note.created',
-	'note.source',
+	'note.url',
+	'note.keep',
 ];
 
 /** Supported image fit modes. */

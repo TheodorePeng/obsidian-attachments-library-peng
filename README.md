@@ -1,121 +1,83 @@
 # Attachments Library Peng
 
-独立的 Obsidian 附件管理插件，基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发。插件 ID 为 `attachments-library-peng`，版本 `1.3.0`，最低 Obsidian 版本 `1.13.1`。保留原项目的 MIT 许可和作者信息。
+基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.4.0**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。本轮运行验收使用 macOS 上的 Obsidian 1.14.5。
 
-附件原文件继续保存在 Vault 中；每份附件对应一份普通 Markdown 元数据文档。短字段放在 Properties，长篇 OCR、Markdown、LaTeX 和说明放在正文。插件不提供 OCR 服务，不下载远程图片，也不会修改图片、PDF 或其他附件的二进制内容。
+附件保存在原位置，配套的普通 Markdown 索引承载 Properties、OCR 和说明。使用原生 Bases 查询与插件画廊管理这些索引。
 
-## 开始使用
+## 设置入口
 
-1. 将构建后的 `main.js`、`manifest.json`、`styles.css` 放入 `<Vault>/.obsidian/plugins/attachments-library-peng/`，在社区插件中启用 **Attachments Library Peng**。原 `attachments-library` 插件目录保持独立；同一 Vault 请只启用一个负责写入这组索引的版本。
-2. 启动只读建立关联表和引用状态，**不会**自动创建 Base、补建索引或改写现有 Library 文档。
-3. 在设置中选择全 Vault 或单文件夹范围，以及扩展名白名单。默认全 Vault，默认白名单包括图片、音频、视频、PDF；可自行加入其他附件类型。Markdown 及其变体、Bases、Canvas 会从白名单中移除；隐藏路径和 Library 目录同样不能作为附件索引。
-4. 运行 **Open, create or upgrade attachment library**。已有 `Attachments Library.base` 按归属标记打开附件管理视图，保留原配置；缺少插件视图时先确认、备份，再追加。新 Base 同时包含原生表格。整理旧名称或扩展查询范围请运行“整理附件管理视图与范围（预览）”，确认后才应用；被业务笔记引用的旧视图名保留。
-5. 运行 **Scan and index attachments (preview first)**，检查完整的新建路径清单后确认。取消不会写入索引或改变初始化状态。首次确认的完整扫描成功后，才允许为以后新增的附件自动建索引，并采用现有索引的 `al_*` 派生字段。
+设置页全部使用英文，分为 Gallery、Indexing、Managed properties、Image button、Maintenance。
 
-尚未完成全量扫描时，可运行 **Create metadata for active attachment**，或点击未索引图片的按钮后确认，仅为单个附件建立索引。它不会启用全库自动补建，也不会修改其他旧索引；这个显式新建索引可持续更新自己的派生状态。
+1. 在 **Gallery → Default base file** 选择任意名称的 `.base` 文件。
+2. 在 **Default view** 选择该文件中的附件画廊视图。Base 尚无画廊时，先使用 **Maintenance → Repair gallery views** 预览并添加；已有表格、Cards、CMS、筛选和名称保留。
+3. 也可以使用 **Create base…** 明确创建一个新文件，再打开画廊。
 
-## 元数据与旧索引兼容
+默认 Base 设置只决定打开命令的目标。其他 Base 可以各自添加插件画廊，使用独立的查询、排序、分组和 Properties 配置。Base 筛选条件与附件索引范围分别设置。
 
-- 新索引路径为 `Library/<完整 Vault 附件路径>.md`。例如 `A/图.png` 对应 `Library/A/图.png.md`，`B/图.png` 对应另一份索引。
-- Library 中已有 `_filePath` 与 `attachment` 一致的旧索引原地采用。任意其他普通笔记不会仅因带有这两个属性而被接管；已标记 `al_schema: 1` 的索引可以放在 Library 以外。
-- 附件重命名时，索引原路径保持稳定；更新关联字段，以及新索引中的受控预览块。旧正文、OCR、公式、来源字段、自定义属性不会被全局字符串替换。
-- 用户移动/重命名一个已识别的索引后会重新建立映射，必要时仅给这一个文档增加 `al_schema: 1`，让移出 Library 的关联在重启后仍可识别。显式改变 Library 设置同样保留已接受索引的身份。
-- 外部删除附件会保留 Markdown，状态显示为 `missing`；外部删除索引不会删除附件，也不会因本次删除立即重建。移出范围显示 `excluded`，保留正文。
-- 关联字段不一致、同一目标有多个索引、大小写折叠路径冲突时，显示 `conflict`，禁止修改和清理，不凭同名文件猜测。
-- YAML 由 Obsidian 的 `stringifyYaml` 序列化，支持引号、换行、中文路径与中文标签。`status` 继续表示 `unread / reading / done / archived / discarded` 阅读状态。
+**Entire Vault** 模式隐藏 Attachment folder；切回文件夹模式会恢复已保存的目录。**Index notes folder** 只影响新索引位置，已有索引保留原位置。扩展名白名单始终禁止 Markdown 及其变体、Base 和 Canvas。
 
-新增派生字段：
+新安装默认关闭自动索引。开启 **Create indexes for new attachments** 后，只处理以后新增的附件，无需先进行全库补建。
 
-| 字段 | 含义 |
-| --- | --- |
-| `al_schema: 1` | 本插件索引格式标记 |
-| `al_usageCount` | 引用原附件或配套索引的业务来源文件数，集合去重 |
-| `al_usageState` | `unknown / used / orphan / missing / conflict / excluded` |
-| `al_keep` | 人工保留；设为 `true` 时两种删除操作都拒绝执行 |
+## 三条命令
 
-新文档包含 `<!-- alp:preview:start -->` / `<!-- alp:preview:end -->` 控制的附件预览，以及 `## OCR`、`## 说明` 两个正文区。可在它们后面自由编辑正文。首次完整扫描前，旧文档的派生状态只在界面计算，不落盘；以后也只写实际变化的属性。
+| Command | 用途 |
+|---|---|
+| Open attachment gallery | 只打开设置中的默认 Base 和视图，复用匹配标签或新开标签 |
+| Update current attachment… | 更新当前原附件、索引或笔记光标处的附件；不唯一时提供选择器 |
+| Scan attachments… | 选择配置范围或其中的文件夹，预览补建和必需字段修复 |
 
-## 图片按钮
+普通更新按范围处理目标，并增量更新引用缓存。维护页的 **Rebuild reference index** 用于明确的完整重建。引用安全检查始终覆盖整个 Vault。
 
-在阅读模式和 Live Preview 的本地图片右边线居中提供一个小链接按钮。解析时使用当前来源文档上下文，支持短链接、别名和尺寸；可见按钮 20×20px，点击区域 24×24px，向图片内侧偏移 4px。进入图片显示，离开后延迟 200ms 隐藏；可关闭自动隐藏。键盘焦点和无悬浮设备始终可用，减少动态效果时无淡入淡出。原图片选择、缩放行为保留在图片本身。
+旧独立刷新、混合配置整理命令已移入 Maintenance；绑定过被移除命令的快捷键需要手动重绑。
 
-| 操作 | 默认行为 |
-| --- | --- |
-| 左键 | 当前页打开索引 |
-| Cmd/Ctrl + 左键 | 使用系统分发打开元数据的 `source` URL |
-| 中键 | 新标签打开索引 |
-| 右键 | 选择打开索引、索引新标签、来源 URL |
-| Command/Ctrl + 悬停按钮 | 仅预览索引 Markdown；支持先按键和后按键 |
-| Command/Ctrl + 悬停图片本体 | 保留原图的原生悬浮行为 |
+## 属性
 
-缺少或不安全的 `source` 会提示，不会误开其他目标；支持 HTTP、HTTPS 与应用 URL scheme，拒绝 `javascript:`、`data:` 等执行或内嵌内容 URI。设置中可以把 Cmd/Ctrl 点击切回原生内部链接行为。尚无索引时点击会明确提出单项创建，悬停始终不创建。
+新索引的业务属性只有三个：
 
-插件注册标准 Page preview 悬停来源（默认要求修饰键）。Hover Editor 可沿用其对标准内部悬停链接的处理；插件不修改 Hover Editor、原生图片工具栏、Bases CMS 源码或它们自己的 Delete 操作。卸载会移除自身按钮、观察器和编辑器扩展。
+| 属性 | 类型 | 含义 |
+|---|---|---|
+| attachment | Text / Wikilink | 插件维护的完整附件路径 |
+| url | Text | 用户填写的 HTTP(S) 或应用跳转地址 |
+| keep | Checkbox | 保护原附件、索引及其中的 OCR、说明 |
 
-## 附件库视图
+另有五个系统属性：`_filePath`、`_fileType`、`al_schema`、`al_usageCount`、`al_usageState`。新协议为 `al_schema: 2`；引用字段是磁盘快照，实时完整度见引用详情及删除预览。
 
-插件注册的 Bases 视图类型为 `attachments-library-peng`，新建时包括“附件管理”“孤儿候选”“待清理”“异常与待检查”四个受管理视图；现有旧视图名称保留。它们使用 Bases 提供的查询结果、排序和分组，并在结果内按当前引用状态筛选。旧的 `al_usageState` 快照不会让实时 `unknown` 项混入可清理项。
+`source`、`tags`、作者等按需自行添加。例如 `source: MarginNote` 表示出处名称，实际跳转地址写入 `url`。插件不生成书籍元数据模板、不自动提取 PDF 作者标题，也不重置自定义属性。
 
-四个模式统一使用响应式卡片画廊，依照 Bases 查询的排序从左到右排列，分组各自建立网格。原生 Properties 控制属性显隐、顺序和显示名称；文件属性与公式使用 Bases 的计算结果。没有额外固定标题、说明段落、路径、状态或 Keep 控件。`false`、`0` 正常显示，空属性默认隐藏。
+原生类型登记只涉及八个必需字段；同名全 Vault 类型或现有值有冲突时，设置页列出受影响文件。必需保留字段损坏时维持保护，通过更新预览和 Properties 修复。
 
-在视图设置中调整卡片宽度（默认 240px，160–480px）、间距（12px）、内容边距（8px）、封面开关、封面属性（默认 `note.attachment`）、比例（4:3）和适配（完整显示）。也可关闭属性标签、显示空属性、调整每页数量（默认 60）。封面仅加载本地图片；音频、视频、PDF 等使用类型图标，独立预览按钮按需创建播放器或文档。
+## 旧索引迁移
 
-| 操作 | 画廊行为 |
-| --- | --- |
-| 点击封面、卡片空白、文件名或 title | 当前标签打开当前卡片的索引 |
-| Command/Ctrl 点击或中键 | 新标签打开索引（与笔记图片按钮打开出处的规则独立） |
-| Command/Ctrl 悬浮名称 | 标准 Page preview / Hover Editor 预览当前索引，支持两种按键顺序 |
-| 点击属性链接 | 使用该链接自己的目标 |
-| 点击属性值或铅笔 | 编辑常用笔记属性；名称本身保持导航，使用铅笔编辑 title |
-| 复选框 | 仅选择当前卡片 |
-| 原附件预览、卡片更多菜单 | 预览/打开原附件、查看实时引用详情或执行安全删除 |
+通过 **Maintenance → Migrate index properties…** 选择当前索引、文件夹或全部已识别索引，先检查差异，再确认备份和迁移。
 
-常态工具栏只有“选择、刷新引用、更多”。选中后出现计数、当前页全选、清空和安全删除；分页仅在需要时显示。换页、查询成员/排序/分组改变会清空选择；宽度、布局和属性显隐变化保留选择。“库信息”放在更多菜单，解释查询记录与实际索引数量的差异。其他插件沿用标准单项文件菜单；不读取 CMS 私有选择集合。
+- 旧 `source` 地址迁入 `url`，`al_keep` 兼容迁为 `keep`。
+- 有意义的旧标题、非默认阅读状态追加到正文末尾的 **Legacy metadata**；原 OCR 和说明保留。
+- 旧模板空字段可以选择清理。Schema 2 文档中用户新加的同名属性保持原样。
+- Base 依赖不明确、配置损坏或新旧用途混用时，保留旧字段，并列出需人工复核的 Base。
 
-文本、数字、日期、日期时间、标签/字符串列表和布尔属性可直接编辑；`al_keep` 仅在 Properties 中选为可见时显示为布尔控件，隐藏后仍受删除保护。URL/内部链接保留导航并提供编辑入口。文件属性、公式、关联字段、schema、引用计数和状态只读；复杂对象和混合列表在索引中编辑。列表编辑每行一个值，保留中文和链接文本。
+未确认迁移前，旧 URL 和保留标记继续生效。Math Peng 的既有材料没有执行批量迁移。
 
-单行 Enter 保存，多行 Command/Ctrl＋Enter 保存，Esc 取消。保存只修改指定 frontmatter 属性，保留 OCR/正文及其他字段；清空写空值（列表 `[]`、布尔 `false`）。并发修改、目标未保存的 Markdown 编辑、正在删除的索引会阻止保存并保留输入。草稿跨重绘和视图切换保留，可从“更多 → 继续编辑”恢复；草稿存在时对应索引不能删除。停用插件会清除会话草稿并提示，不会自动写入。
+## 图片与安全管理
 
-升级保留已有视图名称、类型、归属标记、筛选、排序、分组和 `order`（包括 `[]`）。打开库时，仅为缺少 `order` 的插件自有视图初始化文件名、创建时间和出处，先创建 `.alp-gallery-backup`，并核对并发变化。不迁移索引、不补建全库、不升级 CMS 或 Hover Editor。
+图标位于图片右侧居中，默认自动隐藏。普通点击打开索引；Command/Ctrl 点击默认打开 `url`，也可在设置中选择索引新标签。Command 悬浮图标或画廊名称时预览索引 Markdown，Hover Editor 可接续处理。
 
-## 引用口径与保护状态
+本插件的安全删除入口提供“仅删除索引”和“删除附件及索引”，展示引用、全部关联、保留原因及实际回收文件。`keep`、关联冲突、引用检查不完整、未保存编辑和属性草稿都参与保护；隐藏属性不改变保护。文件进入 Vault 本地 `.trash`。
 
-候选范围即使是单文件夹，来源扫描也覆盖整个 Vault：
+原生 Cards、表格和 CMS 的自带删除按各自行为执行；成对删除请使用本插件明确标记的安全入口。
 
-- Markdown 使用语法树区分普通链接、引用式链接、Wikilink 与数学、代码、注释；数学和代码示例不计业务引用。正文链接、嵌入、前言链接按来源上下文交给 `metadataCache.getFirstLinkpathDest` 解析。
-- 只排除配套索引自身的自动 `attachment` 属性和受控预览块。旧索引中唯一、可明确识别的独立原图预览可排除；歧义会保守标为 `unknown`。索引正文中真正的其他引用仍计入。
-- 引用索引文档同样保护原附件；一个来源同时引用原附件和索引只计一次。
-- Canvas 的 `file` 节点和文本节点内显式 Markdown 链接纳入；包含空格的尖括号路径、嵌套/转义括号、引用式链接定义均有回归测试。
-- Base 的普通查询/卡片展示不算引用。独立显式本地链接及 `link()` / `image()` / `file()` 目标纳入。公式支持常量、普通属性、公式别名、`if()` 的有限分析；显示文字或图标不影响目标判断。以全部 Markdown 属性快照作为行范围上界，属性变化重新分析；不执行公式代码。无法判断的目标保留结构化保护原因。
-- 空 Base 没有引用；损坏的 Base/Canvas、读失败、缓存待就绪/过期、无法可靠解析的本地 Markdown 或 HTML 资源引用会保守阻止清理。
+## 恢复与验证
 
-引用扫描按来源保存正向/反向集合，变动采用 300ms 去抖增量刷新，并串行执行；卡片不会各自全 Vault 扫描。删除前重新扫描。新正文、前言属性链接会补充解析；来源发生变化而缓存仍旧时不能判定为孤儿。
+迁移、类型登记和修复的私有备份及报告位于 `~/.local/share/attachments-library-peng/backups`（目录 0700，文件 0600）。最近操作摘要及恢复位置保存在插件设置中，重载后可查看。桌面恢复能力延迟加载；移动端迁移与恢复尚未验收。
 
-`unknown` 是保护状态。例如 Vault 内有无法界定目标的动态 Base 公式，可能令全库暂时不能清理；不会为了方便删除而把它当零引用。已有已知引用时显示 `used` 并额外展示检查完整度；仅完整且零业务引用时显示 `orphan`。人工先查看引用详情、修复来源或缓存后刷新。
-
-## 两种人工删除操作
-
-- **Delete metadata only**：只移动索引到回收站，保留原附件；索引有入链时拒绝。
-- **Delete attachment + metadata**：同时移动附件和索引；原附件或索引有引用、保留标记、冲突、未知状态、超范围或非唯一关联时拒绝。
-
-受保护项默认跳过，仍可查看完整预览；全被保护时禁用确认按钮。预览列出全部关联索引、业务引用来源与可用行号/属性/Canvas 节点/Base 公式、排除的自动关联、OCR/正文提醒、保护原因及实际回收路径。仅删索引只要求索引入链检查完整且为零，附件直接使用本身不阻止此操作；成对删除要求两者均完整且为零。确认后核对与所选项相关的安全快照、目标 mtime、大小、SHA-256，以及未保存编辑器；无关纯文本修改不会仅因全局代次变化阻止删除。不会自动保存笔记。
-
-成对删除串行执行：先附件，再索引，使用 `app.vault.trash(file, false)` 移到 Vault 本地 `.trash`。附件失败不动索引；索引失败时保留其文档和 `missing` 关联，报告 `partial`。每一对开始前再次检查，中途新增引用会保护尚未执行的项。事务 token 防重复执行；没有永久删除、父目录删除、自动重试或自动续删。
-
-事务原路径、模式、步骤、结果、时间和 `.trash` 恢复目录保存在 `<configDir>/plugins/attachments-library-peng/deletion-log.json`。初始日志无法保存时不开始删除；进度日志失败会停止后续步骤。损坏旧日志先留副本。恢复时查阅日志和 Vault 的 `.trash`，由用户恢复原附件及索引到记录路径；插件不会自动恢复或续删。
-
-## 构建与验证
-
-```sh
+```bash
 npm ci
 npm run pipeline
-node --test tests/file-policy.acceptance.mjs
+node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/base-formulas.acceptance.mjs tests/gallery-config.acceptance.mjs tests/target-selection.acceptance.mjs
+git diff --check
 ```
 
-`pipeline` 包括 ESLint、Vitest 的全源码覆盖检查与 TypeScript/esbuild。四项覆盖率阈值均保持 90%，没有排除新模块。`@codemirror/state` / `@codemirror/view` 开发依赖固定为 `6.5.0` / `6.38.6`，打包继续 external；happy-dom 只用于 DOM 测试。
+- [1.4.0 实施约定](docs/implementation-plan-1.4.0.zh-CN.md)
+- [1.4.0 验收、截图与恢复记录](docs/implementation-acceptance-1.4.0-2026-10-26.md)
+- [1.3.0 及以前的 README 历史](docs/README-through-1.3.0.md)
 
-本次旧测试中“启动自动改 Base”“外删附件连删索引”“附件改名搬迁索引”“中文标签被剥除”等过时预期，已替换成对应的新安全场景；原 PDF 提取、i18n 与仍适用的字段测试保留。新增测试覆盖关联冲突、缓存与引用类型、确认取消、二次引用检查、部分失败、分页选择、按钮路由与卸载清理。
-
-自动测试与 DOM/CodeMirror 模拟测试不能代替实际 Vault 的验收。安装、原生 Bases、阅读模式、Live Preview、Hover Editor、系统外链分发和 `.trash` 恢复需要分别做真实运行验证；本 README 不把源码检查作为这些运行项的通过证明。本地实现未执行发布、推送或 GitHub Release。
-
-1.3.0 的本地安装、兼容范围和真实验收见 [画廊验收记录](docs/implementation-acceptance-1.3.0-2026-10-25.md)。历史 1.1 / 1.2 记录保留在 docs 中。
+保留原项目作者信息与 [MIT 许可](LICENSE)。当前为正式发布的 1.4.0 版本。

@@ -12,8 +12,8 @@ import {
 test('GALLERY_DEFAULT_ORDER is the expected readonly list', () => {
 	assert.deepEqual(GALLERY_DEFAULT_ORDER, [
 		'file.name',
-		'note.created',
-		'note.source',
+		'note.url',
+		'note.keep',
 	]);
 	assert.equal(GALLERY_DEFAULT_ORDER.length, 3);
 });

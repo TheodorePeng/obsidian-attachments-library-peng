@@ -74,6 +74,7 @@ export class BasesView extends Component {
 export class MarkdownView {
     file: any;
     editor: any;
+    getMode() { return "source"; }
 }
 export const modalInstances: any[] = [];
 export class Modal {
@@ -112,3 +113,10 @@ export class StringValue extends Value {}
 export class BooleanValue extends Value {}
 export class NumberValue extends Value {}
 export class LinkValue extends StringValue { renderTo(el:HTMLElement,_ctx:RenderContext) { const a=document.createElement('a');a.href=String(this.raw);a.textContent=String(this.raw);el.appendChild(a); } }
+
+export class SuggestModal<T> extends Modal {
+    setPlaceholder(_text: string) { return this; }
+    getSuggestions(_query: string): T[] { return []; }
+    renderSuggestion(_item: T, _el: HTMLElement) {}
+    onChooseSuggestion(_item: T) {}
+}

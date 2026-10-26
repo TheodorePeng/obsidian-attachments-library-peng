@@ -1,3 +1,4 @@
+import { validateUserManaged } from './managed-properties';
 import { App, MarkdownView, TFile } from 'obsidian';
 import { AttachmentRegistry, readDocument } from './registry';
 import { isGalleryPropertyReadOnly, notePropertyKey } from './gallery-policy';
@@ -49,7 +50,7 @@ export class GalleryPropertyEdits {
     private listeners = new Set<() => void>();
     isActive = (): boolean => true;
     isDeleting = (_path: string): boolean => false;
-    afterSave?: () => Promise<void>;
+    afterSave?: (path: string) => Promise<void>;
     constructor(private app: App, private registry: AttachmentRegistry) {}
     subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
     private emit(): void { for (const listener of this.listeners) listener(); }
@@ -65,11 +66,11 @@ export class GalleryPropertyEdits {
         if (this.isDeleting(indexPath)) throw new Error('索引正在回收');
         const metadata = readDocument(await this.app.vault.read(file)).metadata;
         const existed = own(metadata, key), initial = existed ? metadata[key] : undefined;
-        const kind = key === 'al_keep' && initial == null ? 'boolean' : propertyEditKind(initial);
+        const kind = (key === 'al_keep' || key === 'keep') && initial == null ? 'boolean' : propertyEditKind(initial);
         if (!kind) throw new Error('复杂属性请在索引笔记中编辑');
         // Another view may have opened this draft while the disk read was pending.
         if (this.drafts.has(id)) return this.drafts.get(id)!;
-        const draft: PropertyDraft = { id, indexPath, propertyId, key, file, initial, existed, kind, input: key === 'al_keep' && initial == null ? 'false' : propertyInput(initial, kind), saving: false };
+        const draft: PropertyDraft = { id, indexPath, propertyId, key, file, initial, existed, kind, input: (key === 'al_keep' || key === 'keep') && initial == null ? 'false' : propertyInput(initial, kind), saving: false };
         this.drafts.set(id, draft); this.emit(); return draft;
     }
     cancel(id: string): void { if (!this.drafts.get(id)?.saving) { this.drafts.delete(id); this.emit(); } }
@@ -77,7 +78,7 @@ export class GalleryPropertyEdits {
         const draft = this.drafts.get(id); if (!draft) throw new Error('编辑已结束');
         if (draft.saving) throw new Error('正在保存');
         let value: unknown;
-        try { value = parsePropertyInput(draft.input, draft.kind, draft.initial); } catch (error) { draft.error = error instanceof Error ? error.message : '输入无效'; this.emit(); throw error; }
+        try { value = parsePropertyInput(draft.input, draft.kind, draft.initial); if (draft.key === 'url' && value == null) value = ''; validateUserManaged(draft.key, value); } catch (error) { draft.error = error instanceof Error ? error.message : '输入无效'; this.emit(); throw error; }
         if (draft.existed && equal(value, draft.initial)) { this.drafts.delete(id); this.emit(); return; }
         draft.saving = true; draft.error = undefined; this.emit();
         const run = (this.queues.get(draft.indexPath) ?? Promise.resolve()).then(async () => {
@@ -97,7 +98,7 @@ export class GalleryPropertyEdits {
             await this.registry.refresh();
         });
         this.queues.set(draft.indexPath, run.catch(() => {}));
-        try { await run; try { await this.afterSave?.(); } catch { /* The atomic write succeeded; normal metadata events will retry the refresh. */ } }
+        try { await run; try { await this.afterSave?.(draft.indexPath); } catch { /* The atomic write succeeded; normal metadata events will retry the refresh. */ } }
         catch (error) { draft.error = error instanceof Error ? error.message : '保存失败'; throw error; }
         finally { draft.saving = false; this.emit(); }
     }
