@@ -13,12 +13,16 @@
 
 BRAT installs the plugin from the latest GitHub Release of that repository. Every release ships three assets — `main.js`, `manifest.json` and `styles.css` — and BRAT downloads all three. To move to a newer version, use **Update** in the BRAT settings and reload the plugin. BRAT's behaviour can change over time, so confirm the current procedure in the [official BRAT repository](https://github.com/TfTHacker/obsidian42-brat) and the [BRAT developer guide](https://tfthacker.com/brat-developers).
 
+BRAT reads the release list through the GitHub API. For a public repository, anonymous requests are limited to 60 per hour per IP, so BRAT can briefly report `GitHub API rate limit exceeded`. Setting a **Personal access token** in the BRAT settings raises that limit.
+
 **中文** — 先安装 [BRAT](https://github.com/TfTHacker/obsidian42-brat) 插件，然后打开 **设置 → BRAT → Beta 插件 → 添加 Beta 插件**，填入：
 
 - 仓库地址：`TheodorePeng/obsidian-attachments-library-peng`
 - 插件 ID：`attachments-library-peng`
 
 BRAT 会从该仓库的最新 GitHub Release 安装插件。每个 Release 提供 `main.js`、`manifest.json` 和 `styles.css` 三个资产，BRAT 会一并下载。升级到新版本时，在 BRAT 设置里点更新并重载插件。BRAT 的行为会随版本变化，请以[官方仓库](https://github.com/TfTHacker/obsidian42-brat)和 [BRAT 开发者指南](https://tfthacker.com/brat-developers)为准。
+
+BRAT 通过 GitHub API 读取 Release 列表。公开仓库的匿名请求按 IP 每小时只有 60 次，必要时会出现 `GitHub API rate limit exceeded` 提示；在 BRAT 设置的 **Personal access token** 里填入令牌即可提高额度。
 
 ## 设置入口
 
