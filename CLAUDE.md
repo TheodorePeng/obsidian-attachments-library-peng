@@ -2,7 +2,7 @@
 
 ## What this project is
 
-An Obsidian community plugin that automatically indexes files in an `Attachments/` folder by creating YAML-frontmatter "sidecar" notes in a `Library/` folder. Each sidecar mirrors the attachment's folder structure (when `mirrorFolderStructure` is on), stores rich metadata (title, author, tags, status, etc.), and embeds the original file via `![[path]]`.
+An Obsidian community plugin that automatically indexes files in an `Attachments/` folder by creating YAML-frontmatter "sidecar" notes in a `Library/` folder. New sidecars use flat attachment filenames with numeric collision suffixes; existing sidecars keep their locations. The legacy `mirrorFolderStructure` field is ignored. Each sidecar stores managed association/usage properties and user-authored OCR and notes, and embeds the original file via `![[path]]`.
 
 Vault installation path: `C:\Users\josec\obsidian\.obsidian\plugins\attachments-library\`
 
@@ -65,11 +65,11 @@ vi.mock('../src/my-module', () => ({
 - Config: `eslint.config.mjs` (flat config, ESLint 10 + typescript-eslint v8)
 - Type-aware rules for `src/**/*.ts`; relaxed rules for `tests/`, `__mocks__/`
 - Separate `tsconfig.eslint.json` (standalone, no `extends`) with `"moduleResolution": "node"` — needed because typescript-eslint's parser rejects `"bundler"` via the project's TypeScript
-- Known 10 warnings in `sidecar-manager.ts`: `no-unsafe-*` on `processFrontMatter` callbacks — these are inherent to the Obsidian API and are intentionally left as warnings
+- Known ESLint warnings (2 as of v1.5.0, both intentional): `obsidianmd/prefer-file-manager-trash-file` in `src/deletions.ts` and `@typescript-eslint/unbound-method` in `src/operation-store.ts` — the deletion path intentionally keeps `Vault.trash()` and the operation store intentionally exposes an unbound method; neither is changed
 
 ## Key conventions
 
-- **Sidecar path**: mirrors attachment path under `Library/`, appends `.md`. Controlled by `mirrorFolderStructure` setting.
+- **Sidecar path**: new notes are flat under the configured index folder, preserve the attachment extension and append `.md`; collisions add ` (2)`, ` (3)` before `.md`. Existing mappings always take precedence. `mirrorFolderStructure` is legacy compatibility data only.
 - **Tag sanitization**: spaces → hyphens, strips non-`[a-zA-Z0-9\-_/]`, collapses double hyphens, trims leading/trailing hyphens/underscores.
 - **Frontmatter field `tagsPropertyName`**: defaults to `"tags"` (activates Obsidian's native tag chip UI). Renaming via UI uses `migrateTagsProperty` which iterates all sidecars.
 - **`_heuristic: true`** in sidecar frontmatter means metadata was auto-extracted (PDF or DOI/ISBN) and may need human review.

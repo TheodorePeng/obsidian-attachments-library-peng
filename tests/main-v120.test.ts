@@ -7,7 +7,7 @@ import { confirmAction } from '../src/dialogs';
 vi.mock('../src/dialogs', () => ({ confirmAction: vi.fn(async () => false) }));
 vi.mock('../src/i18n/i18n', () => ({ initI18n: vi.fn(async () => {}), t: (key: string) => key }));
 async function setup(contents: Record<string,string> = {}) {
-  const f=fixture(contents); const p=new Plugin(f.app); await p.onload(); await p.ready; return {...f,p};
+  const f=fixture(contents); const p=new Plugin(f.app); p.loadData=vi.fn(async()=>({settingsVersion:1})); await p.onload(); await p.ready; return {...f,p};
 }
 const oldBase='filters: file.inFolder("Library")\nviews:\n - type: cards\n   name: Cards\n - type: attachments-library-peng\n   name: All attachments\n   alpOwned: attachments-library-peng:all\n';
 it('opens the selected gallery without changing configuration',async()=>{const f=await setup({'Attachments Library.base':oldBase});await f.p.openLibrary();expect(f.data.get('Attachments Library.base')).toBe(oldBase);expect(f.writes).toEqual([]);expect(f.app.workspace.getLeaf.mock.results.at(-1).value.setViewState).toHaveBeenCalledWith({type:'bases',state:{file:'Attachments Library.base',viewName:'All attachments'}});});

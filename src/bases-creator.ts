@@ -1,4 +1,5 @@
-import { App, normalizePath, parseYaml, stringifyYaml } from 'obsidian';
+import { App, TFile, normalizePath, parseYaml, stringifyYaml } from 'obsidian';
+import { baseName, occupiedPaths } from './paths';
 import { AttachmentsLibrarySettings } from './types';
 import { GALLERY_DEFAULT_ORDER } from './gallery-config';
 export const VIEW_TYPE = 'attachments-library-peng';
@@ -74,6 +75,12 @@ export function initializeGalleryViews(content: string): string {
 export class BasesCreator {
     isActive: () => boolean = () => true;
     constructor(private app: App, private settings: AttachmentsLibrarySettings) { }
+    async createNewBaseFile(value: string): Promise<TFile> {
+        const path = baseName(value);
+        if (!this.isActive()) throw new Error('Plugin stopped.');
+        if (occupiedPaths(this.app).has(path.toLocaleLowerCase()) || this.app.vault.getAbstractFileByPath(path)) throw new Error('Destination Base already exists.');
+        return this.app.vault.create(path, upgradeBase('', this.settings.libraryFolder));
+    }
     getBaseFilePathForFolder(folder: string): string { const f = folder.trim(); return normalizePath(f ? `${f}/Attachments Library.base` : 'Attachments Library.base'); }
     getBaseFilePath(): string { return this.getBaseFilePathForFolder(this.settings.baseFolderPath); }
     async createOrUpdateBaseFile(pathOverride?: string, upgrade = false): Promise<string> {

@@ -35,6 +35,12 @@ const fs = require('fs');
 const m = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
 m.version = '$VERSION';
 fs.writeFileSync('manifest.json', JSON.stringify(m, null, 2) + '\n');
+const versionsPath = 'versions.json';
+if (fs.existsSync(versionsPath)) {
+  const v = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
+  v['$VERSION'] = m.minAppVersion;
+  fs.writeFileSync(versionsPath, JSON.stringify(v, null, 2) + '\n');
+}
 "
 
 npm version "$VERSION" --no-git-tag-version --silent
@@ -47,7 +53,7 @@ npm run pipeline
 # ── Commit, tag, push ────────────────────────────────────────────────────────
 
 echo "==> Committing version bump"
-git add manifest.json package.json package-lock.json
+git add manifest.json package.json package-lock.json versions.json
 git commit -m "Bump version to $VERSION"
 
 echo "==> Creating tag $VERSION"
@@ -58,11 +64,15 @@ git push
 git push origin "$VERSION"
 
 # ── GitHub release ───────────────────────────────────────────────────────────
+#
+# The Release itself is created by .github/workflows/release.yml, which runs on
+# the tag push above and uploads main.js, manifest.json and styles.css.
+# Do not run `gh release create` here: it would race that workflow and the
+# manual asset list would omit styles.css.
 
-echo "==> Creating GitHub release"
-gh release create "$VERSION" main.js manifest.json \
-  --title "$VERSION" \
-  --generate-notes
+echo "==> GitHub release is created by .github/workflows/release.yml"
+echo "    Watch:  gh run watch"
+echo "    Check:  gh release view $VERSION"
 
 echo ""
-echo "✓ Released $VERSION"
+echo "✓ Tagged & pushed $VERSION — GitHub Release 由 release workflow 创建"

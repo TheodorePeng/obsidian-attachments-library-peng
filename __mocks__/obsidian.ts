@@ -5,6 +5,7 @@ export const requestUrl = vi.fn();
 export class TAbstractFile {
     path = '';
 }
+export class TFolder extends TAbstractFile { children: TAbstractFile[] = []; }
 export class TFile extends TAbstractFile {
     extension = '';
     basename = '';
@@ -44,12 +45,13 @@ export class Setting {
     dropdownCallbacks: any[] = [];
     constructor(_container: any) { settingInstances.push(this); }
     setName(name: string) { this.name = name; return this; }
-    setDesc(_desc: string) { return this; }
+    desc = '';
+    setDesc(desc: string) { this.desc = desc; return this; }
     setHeading() { return this; }
-    addText(cb: any) { const text: any = { setPlaceholder: () => text, setValue: () => text, onChange: (fn: any) => { this.textCallbacks.push(fn); return text; } }; cb(text); return this; }
+    addText(cb: any) { const inputEl = typeof document === 'undefined' ? { addEventListener() {}, removeEventListener() {} } : document.createElement('input'); const text: any = { inputEl, setDisabled: () => text, setPlaceholder: () => text, setValue: (v:string) => {inputEl.value=v; return text;}, onChange: (fn: any) => { this.textCallbacks.push(fn); return text; } }; cb(text); return this; }
     addToggle(cb: any) { const toggle: any = { setValue: () => toggle, onChange: (fn: any) => { this.toggleCallbacks.push(fn); return toggle; } }; cb(toggle); return this; }
     addButton(cb: any) { const button: any = { setButtonText: () => button, setCta: () => button, setDisabled: () => button, onClick: (fn: any) => { this.buttonCallbacks.push(fn); return button; } }; cb(button); return this; }
-    addDropdown(cb: any) { const drop: any = { setValue: () => drop, addOptions: () => drop, onChange: (fn: any) => { this.dropdownCallbacks.push(fn); return drop; } }; cb(drop); return this; }
+    addDropdown(cb: any) { const drop: any = { setDisabled: () => drop, setValue: () => drop, addOptions: () => drop, onChange: (fn: any) => { this.dropdownCallbacks.push(fn); return drop; } }; cb(drop); return this; }
 }
 export const noticeMessages: string[] = [];
 export class Notice {
@@ -119,4 +121,15 @@ export class SuggestModal<T> extends Modal {
     getSuggestions(_query: string): T[] { return []; }
     renderSuggestion(_item: T, _el: HTMLElement) {}
     onChooseSuggestion(_item: T) {}
+}
+
+export const inputSuggestInstances: any[] = [];
+export class AbstractInputSuggest<T> {
+    closed = false;
+    constructor(public app: any, public inputEl: any) { inputSuggestInstances.push(this); }
+    close() { this.closed = true; }
+    setValue(value: string) { this.inputEl.value = value; }
+    getSuggestions(_query: string): T[] { return []; }
+    renderSuggestion(_item: T, _el: HTMLElement) {}
+    selectSuggestion(_item: T, _event: any) {}
 }

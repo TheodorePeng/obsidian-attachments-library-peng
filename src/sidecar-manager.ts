@@ -1,6 +1,9 @@
+import { allocateIndexPath, occupiedPaths, validateFolder } from './paths';
 import { newMetadata, managedIssues } from './managed-properties';
-import { App, MarkdownView, TFile, normalizePath, stringifyYaml } from 'obsidian';
+import { App, MarkdownView, TFile, stringifyYaml } from 'obsidian';
 import { AttachmentsLibrarySettings } from './types';
+
+type CreationResult = 'created' | 'existing' | 'skipped';
 
 import { AttachmentRegistry, AttachmentRecord, PREVIEW_END, PREVIEW_START, readDocument } from './registry';
 import { isEligiblePath } from './file-policy';
@@ -16,34 +19,65 @@ export class SidecarManager {
 
     }
     authorize(path: string): void { this.authorized.add(path); }
-    getSidecarPath(path: string): string {
-        return this.registry.records.get(path)?.indexPath ?? normalizePath(`${this.settings.libraryFolder}/${path}.md`);
+    private creationQueue: Promise<unknown> = Promise.resolve();
+    getSidecarPath(path: string, reserved = new Set<string>()): string {
+        return this.registry.records.get(path)?.indexPath ?? allocateIndexPath(path, this.settings.libraryFolder, occupiedPaths(this.app), reserved);
+    }
+    async createSidecar(file: TFile, expectedIndexPath?: string, plannedLibraryFolder?: string, allowed = () => true): Promise<CreationResult> {
+        const assetPath = file.path;
+        const task = this.creationQueue.then(() => {
+            if (file.path !== assetPath) throw new Error('Attachment identity changed; preview again.');
+            return this.createQueued(file, expectedIndexPath, plannedLibraryFolder, allowed);
+        });
+        this.creationQueue = task.catch(() => {});
+        return task;
     }
     getAttachmentPath(path: string): string { return this.registry.byIndex.get(path)?.assetPath ?? ''; }
-    async createSidecar(file: TFile): Promise<void> {
-        if (!this.isActive() || !isEligiblePath(file.path, this.settings))
-            return;
+    private async createQueued(file: TFile, expectedIndexPath?: string, plannedLibraryFolder?: string, allowed = () => true): Promise<CreationResult> {
+        if (!this.isActive() || !allowed() || !isEligiblePath(file.path, this.settings))
+            return 'skipped';
+        const assetPath = file.path, folder = this.settings.libraryFolder;
         await this.registry.refresh();
         await this.references?.flushDirty();
         const record = this.registry.records.get(file.path);
         if (record?.conflict)
             throw new Error(record.reason);
         if (record?.indexPath)
-            return;
-        const path = this.getSidecarPath(file.path);
-        if (this.app.vault.getFileByPath(path) || this.app.vault.getFiles().some(f => f.path.toLocaleLowerCase() === path.toLocaleLowerCase()))
-            throw new Error('Index path collision: ' + path);
+            return 'existing';
+        if (this.app.vault.getFileByPath(file.path) !== file) throw new Error('Attachment identity changed; preview again.');
+        if (plannedLibraryFolder !== undefined && plannedLibraryFolder !== this.settings.libraryFolder) throw new Error('Index folder changed; preview again.');
+        validateFolder(this.app, this.settings.libraryFolder, this.settings, false);
+        let path = expectedIndexPath ?? this.getSidecarPath(file.path);
+        if (expectedIndexPath && occupiedPaths(this.app).has(path.toLocaleLowerCase())) throw new Error('Index path occupied; preview again: ' + path);
         await this.ensureFolder(path.split('/').slice(0, -1).join('/'));
         if (!this.registry.mappingComplete) throw new Error('Attachment index inventory is incomplete');
         await this.ensureTypes?.();
         await this.registry.refresh();
         const fresh = this.registry.records.get(file.path);
         if (!this.registry.mappingComplete || fresh?.conflict) throw new Error(fresh?.reason || 'Index inventory incomplete');
-        if (fresh?.indexPath) return;
+        if (fresh?.indexPath) return 'existing';
         const fm = newMetadata(file.path);
-        if (!this.isActive())
-            return;
-        await this.app.vault.create(path, `---\n${stringifyYaml(fm)}---\n\n${this.preview(file.path)}\n\n## OCR\n\n## 说明\n\n`);
+        if (!this.isActive() || !allowed()) return 'skipped';
+        if (plannedLibraryFolder !== undefined && plannedLibraryFolder !== this.settings.libraryFolder) throw new Error('Index folder changed; preview again.');
+        if (this.app.vault.getFileByPath(file.path) !== file) throw new Error('Attachment identity changed; preview again.');
+        for (;;) {
+            if (!this.isActive() || !allowed()) return 'skipped';
+            if (file.path !== assetPath || this.app.vault.getFileByPath(assetPath) !== file) throw new Error('Attachment identity changed; preview again.');
+            if (this.settings.libraryFolder !== folder) throw new Error('Index folder changed; preview again.');
+            if (!isEligiblePath(assetPath, this.settings)) return 'skipped';
+            if (!expectedIndexPath) path = this.getSidecarPath(file.path);
+            if (occupiedPaths(this.app).has(path.toLocaleLowerCase())) throw new Error('Index path occupied; preview again: ' + path);
+            try {
+                await this.app.vault.create(path, `---\n${stringifyYaml(fm)}---\n\n${this.preview(file.path)}\n\n## OCR\n\n## 说明\n\n`);
+                break;
+            } catch (error) {
+                if (expectedIndexPath || !occupiedPaths(this.app).has(path.toLocaleLowerCase())) throw error;
+                await this.registry.refresh();
+                const concurrent = this.registry.records.get(file.path);
+                if (!this.registry.mappingComplete || concurrent?.conflict) throw new Error('Index inventory changed.');
+                if (concurrent?.indexPath) return 'existing';
+            }
+        }
         this.authorized.add(path);
         await this.registry.refresh();
         if (this.references) {
@@ -51,6 +85,7 @@ export class SidecarManager {
             await this.references.flushDirty();
             await this.writeDerived(this.registry.records.get(file.path)!);
         }
+        return 'created';
     }
 
     private preview(path: string): string { return `${PREVIEW_START}\n![[${path}]]\n${PREVIEW_END}`; }

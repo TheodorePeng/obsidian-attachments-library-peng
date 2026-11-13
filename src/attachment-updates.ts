@@ -8,7 +8,7 @@ import { parseMarkdownLinks } from './markdown-links';
 import { selectAttachmentTarget } from './target-selection';
 import { chooseItem } from './choices';
 import { assertSaved, fingerprint, OperationStore } from './operation-store';
-export interface UpdateItem { assetPath: string; indexPath?: string; kind: 'create' | 'repair' | 'unchanged' | 'conflict' | 'excluded'; changes: Record<string, unknown>; reason: string; hash?: string; file?: TFile; }
+export interface UpdateItem { assetPath: string; indexPath?: string; plannedLibraryFolder?: string; kind: 'create' | 'repair' | 'unchanged' | 'conflict' | 'excluded'; changes: Record<string, unknown>; reason: string; hash?: string; file?: TFile; }
 export class AttachmentUpdates {
     blocked = (_path: string): boolean => false;
     isActive = (): boolean => true;
@@ -37,14 +37,15 @@ export class AttachmentUpdates {
     async preview(paths: string[]): Promise<UpdateItem[]> {
         await this.registry.refresh(); await this.references.flushDirty();
         const items: UpdateItem[] = [];
-        for (const path of [...new Set(paths)]) {
+        const reserved = new Set<string>();
+        for (const path of [...new Set(paths)].sort()) {
             const record = this.registry.records.get(path);
             const item: UpdateItem = { assetPath: path, indexPath: record?.indexPath, kind: 'unchanged', changes: {}, reason: '' };
             items.push(item);
             if (!isEligiblePath(path, this.registry.settings)) { item.kind = 'excluded'; item.reason = 'Outside the configured indexing scope'; continue; }
             if (!this.registry.mappingComplete || !record?.asset) { item.kind = 'conflict'; item.reason = 'Missing attachment or incomplete index inventory'; continue; }
             if (record.conflict && (record.indexPaths?.length !== 1 || !/Invalid|missing|usage/.test(record.reason))) { item.kind = 'conflict'; item.reason = record.reason; continue; }
-            if (!record.index) { item.kind = 'create'; continue; }
+            if (!record.index) { item.kind = 'create'; item.file = record.asset; item.plannedLibraryFolder = this.registry.settings.libraryFolder; item.indexPath = this.sidecars.getSidecarPath(path, reserved); continue; }
             item.file = record.index;
             const text = await this.app.vault.read(record.index), m = readDocument(text).metadata;
             item.hash = fingerprint(text);
@@ -68,7 +69,11 @@ export class AttachmentUpdates {
                 if (item.kind === 'create') {
                     const file = this.app.vault.getFileByPath(item.assetPath);
                     if (!file) throw new Error('Attachment disappeared');
-                    await this.sidecars.createSidecar(file);
+                    if (file !== item.file) throw new Error('Attachment identity changed; preview again');
+                    const existing = this.registry.records.get(item.assetPath);
+                    if (existing?.indexPath && !existing.conflict && this.registry.mappingComplete) { results.push('existing: ' + item.assetPath + ' → ' + existing.indexPath); continue; }
+                    const result = await this.sidecars.createSidecar(file, item.indexPath, item.plannedLibraryFolder);
+                    if (result !== 'created') { results.push(result + ': ' + item.assetPath); continue; }
                 } else if (item.kind === 'repair') {
                     const file = this.app.vault.getFileByPath(item.indexPath!);
                     if (file !== item.file || !file) throw new Error('Index identity changed');

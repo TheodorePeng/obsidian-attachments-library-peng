@@ -18,7 +18,8 @@ import { OperationStore } from './operation-store';
 import { ManagedPropertyTypes } from './property-types';
 import { AttachmentUpdates } from './attachment-updates';
 import { PropertyMigration } from './property-migration';
-import { chooseItem, enterPath } from './choices';
+import { chooseItem } from './choices';
+import { baseName, existingBase, occupiedPaths, validateFolder } from './paths';
 import { galleryViews, openDestination, settingsFromSaved } from './gallery-destination';
 export default class AttachmentsLibraryPlugin extends Plugin {
     settings: AttachmentsLibrarySettings;
@@ -39,6 +40,9 @@ export default class AttachmentsLibraryPlugin extends Plugin {
     private eventQueue = Promise.resolve();
     private stopped = false;
     private initializing = true;
+    private autoCreateEpoch = 0;
+    private baseBusy = false;
+    private settingsTab?: AttachmentsLibrarySettingsTab;
     async onload(): Promise<void> {
         this.register(() => { this.stopped = true; });
         this.store.context = this.app.vault.getName?.() ?? '';
@@ -89,7 +93,8 @@ export default class AttachmentsLibraryPlugin extends Plugin {
         this.addCommand({ id: 'open-library', name: 'Open attachment gallery', callback: () => { this.queue(() => this.openLibrary()); } });
         this.addCommand({ id: 'create-sidecar-for-active', name: 'Update current attachment…', callback: () => { this.queue(() => this.updateCurrent()); } });
         this.addCommand({ id: 'backfill-all', name: 'Scan attachments…', callback: () => { this.queue(() => this.runBackfill()); } });
-        this.addSettingTab(new AttachmentsLibrarySettingsTab(this.app, this));
+        this.settingsTab = new AttachmentsLibrarySettingsTab(this.app, this);
+        this.addSettingTab(this.settingsTab);
     }
     private report(error: unknown): void { new Notice(error instanceof Error ? error.message : 'Attachments Library operation failed'); }
     private queue(action: () => Promise<void>): void { this.eventQueue = this.eventQueue.then(() => this.stopped ? undefined : action()).catch(error => this.report(error)); }
@@ -97,14 +102,21 @@ export default class AttachmentsLibraryPlugin extends Plugin {
         this.registerEvent(this.app.vault.on('create', (file: TAbstractFile) => {
             if (!(file instanceof TFile)) return;
             this.registry.invalidate(file.path); this.references.schedule(file.path); this.references.invalidateResolution();
-            this.queue(async () => { if (this.settings.autoCreateOnNew && isEligiblePath(file.path, this.settings)) { await this.ready; await this.sidecarManager.createSidecar(file); } await this.refreshUsage(); });
+            const accept = !this.initializing && this.settings.autoCreateOnNew;
+            const epoch = this.autoCreateEpoch;
+            const allowed = () => accept && epoch === this.autoCreateEpoch && this.settings.autoCreateOnNew && !this.stopped;
+            this.queue(async () => { if (allowed() && isEligiblePath(file.path, this.settings)) await this.sidecarManager.createSidecar(file, undefined, undefined, allowed); await this.refreshUsage(); });
         }));
         this.registerEvent(this.app.vault.on('delete', (file: TAbstractFile) => { this.references.schedule(file.path); this.references.invalidateResolution(); this.queue(() => this.refreshUsage()); }));
         this.registerEvent(this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
             this.references.schedule(oldPath); this.references.schedule(file.path); this.registry.invalidate(file.path);
             this.queue(async () => {
                 const base = this.settings.defaultBasePath;
-                if (base === oldPath || base?.startsWith(oldPath + '/')) { this.settings.defaultBasePath = file.path + base.slice(oldPath.length); await this.saveData(this.settings); }
+                const folder = this.settings.libraryFolder;
+                const patch: Partial<AttachmentsLibrarySettings> = {};
+                if (base === oldPath || base?.startsWith(oldPath + '/')) patch.defaultBasePath = file.path + base.slice(oldPath.length);
+                if (folder === oldPath || folder.startsWith(oldPath + '/')) patch.libraryFolder = file.path + folder.slice(oldPath.length);
+                if (Object.keys(patch).length) await this.commitPathSettings(patch);
                 if (file instanceof TFile && file.extension !== 'md') await this.sidecarManager.renameSidecar(oldPath, file.path);
                 else { const record = this.registry.byIndex.get(oldPath); if (record && record.metadata.al_schema === undefined) { this.settings.legacyIndexPaths = [...new Set([...(this.settings.legacyIndexPaths ?? []).filter(path => path !== oldPath), file.path])]; await this.saveData(this.settings); } }
                 // Relative and short links may resolve differently after a move. Invalidate analysis, not file reads.
@@ -149,20 +161,50 @@ export default class AttachmentsLibraryPlugin extends Plugin {
     }
     async requestDeletion(paths: string[], mode: 'metadata-only' | 'pair'): Promise<void> { await requestDeletion(this.app, this, paths, mode); }
     async openLibrary(): Promise<void> { await openDestination(this.app, this.settings); }
-    async selectBase(): Promise<void> {
-        const path = await chooseItem(this.app, 'Choose a Base file', this.app.vault.getFiles().filter(f => f.extension === 'base').map(f => f.path));
-        if (!path) return;
-        const file = this.app.vault.getFileByPath(path); if (!file) return;
-        if (this.settings.defaultBasePath !== path) { this.settings.defaultViewName = ''; this.settings.defaultViewOwner = ''; }
-        this.settings.defaultBasePath = path;
-        await this.saveSettings();
-        const views = galleryViews(await this.app.vault.cachedRead(file));
-        if (!views.length) { new Notice('This base has no attachment gallery. Preview a view repair in the maintenance settings.'); return; }
-        const name = await chooseItem(this.app, 'Choose a gallery view', views.map(v => v.name));
-        if (!name) return;
-        const view = views.find(v => v.name === name)!;
-        this.settings.defaultBasePath = path; this.settings.defaultViewName = name; this.settings.defaultViewOwner = view.owner;
-        await this.saveSettings();
+    private async commitPathSettings(patch: Partial<AttachmentsLibrarySettings>): Promise<void> {
+        const previous = { ...this.settings };
+        const legacy = [...this.registry.byIndex.values()].filter(record => record.indexPath && record.metadata.al_schema === undefined).map(record => record.indexPath!);
+        const next = { ...this.settings, ...patch, legacyIndexPaths: [...new Set([...(this.settings.legacyIndexPaths ?? []), ...legacy])] };
+        Object.assign(this.settings, next);
+        try { await this.saveData(next); }
+        catch (error) {
+            for (const key of Object.keys(patch) as (keyof AttachmentsLibrarySettings)[]) if (this.settings[key] === next[key]) Object.assign(this.settings, { [key]: previous[key] });
+            if (this.settings.legacyIndexPaths === next.legacyIndexPaths) this.settings.legacyIndexPaths = previous.legacyIndexPaths;
+            throw error;
+        }
+        this.settingsTab?.pathsChanged();
+        await this.refreshUsage();
+    }
+    async setIndexFolder(value: string): Promise<void> {
+        const folder = validateFolder(this.app, value, this.settings);
+        await this.registry.refresh();
+        await this.commitPathSettings({ libraryFolder: folder });
+    }
+    async setAutoCreate(enabled: boolean): Promise<void> {
+        const previous = this.settings.autoCreateOnNew;
+        this.settings.autoCreateOnNew = enabled;
+        if (!enabled) this.autoCreateEpoch++;
+        try { await this.saveData(this.settings); } catch (error) { this.settings.autoCreateOnNew = previous; throw error; }
+    }
+    async clearBase(): Promise<void> {
+        await this.commitPathSettings({ defaultBasePath: '', defaultViewName: '', defaultViewOwner: '' });
+    }
+    async selectBase(value?: string): Promise<void> {
+        if (this.baseBusy) throw new Error('A Base operation is already running.');
+        this.baseBusy = true;
+        try {
+            const path = value ?? await chooseItem(this.app, 'Choose a Base file', this.app.vault.getFiles().filter(f => f.extension === 'base').map(f => f.path));
+            if (path === null) return;
+            const file = existingBase(this.app, path);
+            const views = galleryViews(await this.app.vault.cachedRead(file));
+            if (this.app.vault.getFileByPath(file.path) !== file) throw new Error('Base identity changed; apply again.');
+            const preferred = views.filter(view => view.owner === VIEW_TYPE + ':all');
+            const view = preferred.length === 1 ? preferred[0] : views.length === 1 ? views[0] : undefined;
+            const remembered = this.settings.defaultBasePath === file.path ? views.filter(candidate => this.settings.defaultViewOwner ? candidate.owner === this.settings.defaultViewOwner : candidate.name === this.settings.defaultViewName) : [];
+            const selected = remembered.length === 1 ? remembered[0] : view;
+            await this.commitPathSettings({ defaultBasePath: file.path, defaultViewName: selected?.name ?? '', defaultViewOwner: selected?.owner ?? '' });
+            if (!views.length) new Notice('This base has no attachment gallery. Use repair gallery views in maintenance.');
+        } finally { this.baseBusy = false; }
     }
     async selectDefaultView(): Promise<void> {
         const file = this.app.vault.getFileByPath(this.settings.defaultBasePath ?? '');
@@ -171,17 +213,30 @@ export default class AttachmentsLibraryPlugin extends Plugin {
         if (!views.length) throw new Error('No gallery view. Use Repair gallery views in Maintenance.');
         const name = await chooseItem(this.app, 'Choose a gallery view', views.map(v => v.name));
         if (!name) return;
-        this.settings.defaultViewName = name; this.settings.defaultViewOwner = views.find(v => v.name === name)!.owner; await this.saveSettings();
+        if (this.settings.defaultBasePath !== file.path || this.app.vault.getFileByPath(file.path) !== file) throw new Error('Selected Base changed; choose a view again.');
+        const matches = views.filter(view => view.name === name);
+        if (matches.length !== 1) throw new Error('Gallery view is missing or ambiguous.');
+        await this.commitPathSettings({ defaultViewName: name, defaultViewOwner: matches[0].owner });
     }
-    async createGallery(): Promise<void> {
-        const path = await enterPath(this.app, 'Create attachment Base', 'Attachments Library.base'); if (path === null) return;
-        if (!/^(?!\/)(?!.*(?:^|\/)\.\.?\/)[^\\]+\.base$/.test(path) || this.app.vault.getAbstractFileByPath(path)) throw new Error('Choose a new Vault-relative .base path.');
-        if (!await confirmAction(this.app, 'Create attachment Base', [path, 'Create a new Base with a table and four attachment gallery views. Existing files are never replaced.'])) return;
-        await this.basesCreator.createOrUpdateBaseFile(path);
-        this.settings.defaultBasePath = path; this.settings.defaultViewOwner = VIEW_TYPE + ':all';
-        const file = this.app.vault.getFileByPath(path)!;
-        this.settings.defaultViewName = galleryViews(await this.app.vault.cachedRead(file)).find(v => v.owner === this.settings.defaultViewOwner)!.name;
-        await this.saveSettings(); await this.rememberReport('Created attachment base: ' + path, '');
+    async createGallery(value = 'Attachments Library.base'): Promise<void> {
+        if (this.baseBusy) throw new Error('A Base operation is already running.');
+        if (this.settings.defaultBasePath) throw new Error('Clear the selected Base before creating another.');
+        this.baseBusy = true;
+        let created = '';
+        try {
+            const path = baseName(value);
+            if (occupiedPaths(this.app).has(path.toLocaleLowerCase()) || this.app.vault.getAbstractFileByPath(path)) throw new Error('A file or folder already exists at: ' + path);
+            const file = await this.basesCreator.createNewBaseFile(path);
+            created = path;
+            const views = galleryViews(await this.app.vault.cachedRead(file));
+            const view = views.find(v => v.owner === VIEW_TYPE + ':all');
+            if (!view) throw new Error('Created Base has no default gallery.');
+            await this.commitPathSettings({ defaultBasePath: path, defaultViewOwner: view.owner, defaultViewName: view.name });
+            this.recentReport = 'Created attachment base: ' + path;
+        } catch (error) {
+            if (created) throw new Error('Created ' + created + ', but could not select it. Use existing Base to retry. ' + (error instanceof Error ? error.message : 'Operation failed'));
+            throw error;
+        } finally { this.baseBusy = false; }
     }
     async reviewLibraryConfiguration(): Promise<void> {
         const path = this.settings.defaultBasePath;

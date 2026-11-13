@@ -34,6 +34,13 @@ $manifest.version = $Version
 $manifest | ConvertTo-Json -Depth 10 | Set-Content manifest.json -Encoding UTF8 -NoNewline
 Add-Content manifest.json "`n"
 
+if (Test-Path versions.json) {
+    $versions = Get-Content versions.json -Raw | ConvertFrom-Json
+    $versions | Add-Member -NotePropertyName $Version -NotePropertyValue $manifest.minAppVersion -Force
+    $versions | ConvertTo-Json -Depth 10 | Set-Content versions.json -Encoding UTF8 -NoNewline
+    Add-Content versions.json "`n"
+}
+
 npm version $Version --no-git-tag-version --silent
 
 # ── Build & test ──────────────────────────────────────────────────────────────
@@ -45,7 +52,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # ── Commit, tag, push ─────────────────────────────────────────────────────────
 
 Write-Host "==> Committing version bump"
-git add manifest.json package.json package-lock.json
+git add manifest.json package.json package-lock.json versions.json
 git commit -m "Bump version to $Version"
 
 Write-Host "==> Creating tag $Version"
@@ -56,9 +63,15 @@ git push
 git push origin $Version
 
 # ── GitHub release ────────────────────────────────────────────────────────────
+#
+# The Release itself is created by .github/workflows/release.yml, which runs on
+# the tag push above and uploads main.js, manifest.json and styles.css.
+# Do not run `gh release create` here: it would race that workflow and the
+# manual asset list would omit styles.css.
 
-Write-Host "==> Creating GitHub release"
-gh release create $Version main.js manifest.json --title $Version --generate-notes
+Write-Host "==> GitHub release is created by .github/workflows/release.yml"
+Write-Host "    Watch:  gh run watch"
+Write-Host "    Check:  gh release view $Version"
 
 Write-Host ""
-Write-Host "Released $Version successfully."
+Write-Host "Tagged & pushed $Version — GitHub Release 由 release workflow 创建。"

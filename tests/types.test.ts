@@ -15,8 +15,8 @@ describe('DEFAULT_SETTINGS', () => {
         expect(DEFAULT_SETTINGS.watchedExtensions).toContain('.png');
         expect(DEFAULT_SETTINGS.watchedExtensions).toContain('.mp4');
     });
-    it('autoCreateOnNew starts disabled', () => {
-        expect(DEFAULT_SETTINGS.autoCreateOnNew).toBe(false);
+    it('autoCreateOnNew starts enabled', () => {
+        expect(DEFAULT_SETTINGS.autoCreateOnNew).toBe(true);
     });
     it('autoDeleteOnRemove is false', () => {
         expect(DEFAULT_SETTINGS.autoDeleteOnRemove).toBe(false);

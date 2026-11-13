@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS: AttachmentsLibrarySettings = {
     attachmentsFolder: "Attachments",
     libraryFolder: "Library",
     watchedExtensions: [...DEFAULT_EXTENSIONS],
-    autoCreateOnNew: false,
+    autoCreateOnNew: true,
     autoDeleteOnRemove: false,
     mirrorFolderStructure: true,
     baseFolderPath: "",
