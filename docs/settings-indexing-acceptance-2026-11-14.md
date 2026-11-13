@@ -1,6 +1,6 @@
 # 设置与索引创建优化验收（2026-11-14）
 
-实现版本仍为 1.4.0；未提交、推送或发布。源码是正式修改来源，仅部署到测试 Vault `Obsidian AI Coding`，未部署主 Vault。
+实现版本为 1.5.0，已随 1.5.0 GitHub Release 发布。源码是正式修改来源，仅部署到测试 Vault `Obsidian AI Coding`，未部署主 Vault。
 
 ## 最终行为
 

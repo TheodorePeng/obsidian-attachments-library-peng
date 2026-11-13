@@ -1,22 +1,46 @@
 # Attachments Library Peng
 
-基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.4.0**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。本轮运行验收使用 macOS 上的 Obsidian 1.14.5。
+基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.5.0**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。本轮运行验收使用 macOS 上的 Obsidian 1.15.1。
 
 附件保存在原位置，配套的普通 Markdown 索引承载 Properties、OCR 和说明。使用原生 Bases 查询与插件画廊管理这些索引。
+
+## Install via BRAT / 通过 BRAT 安装
+
+**English** — Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin, then open **Settings → BRAT → Beta plugins → Add Beta plugin** and enter:
+
+- Repository: `TheodorePeng/obsidian-attachments-library-peng`
+- Plugin ID: `attachments-library-peng`
+
+BRAT installs the plugin from the latest GitHub Release of that repository. Every release ships three assets — `main.js`, `manifest.json` and `styles.css` — and BRAT downloads all three. To move to a newer version, use **Update** in the BRAT settings and reload the plugin. BRAT's behaviour can change over time, so confirm the current procedure in the [official BRAT repository](https://github.com/TfTHacker/obsidian42-brat) and the [BRAT developer guide](https://tfthacker.com/brat-developers).
+
+**中文** — 先安装 [BRAT](https://github.com/TfTHacker/obsidian42-brat) 插件，然后打开 **设置 → BRAT → Beta 插件 → 添加 Beta 插件**，填入：
+
+- 仓库地址：`TheodorePeng/obsidian-attachments-library-peng`
+- 插件 ID：`attachments-library-peng`
+
+BRAT 会从该仓库的最新 GitHub Release 安装插件。每个 Release 提供 `main.js`、`manifest.json` 和 `styles.css` 三个资产，BRAT 会一并下载。升级到新版本时，在 BRAT 设置里点更新并重载插件。BRAT 的行为会随版本变化，请以[官方仓库](https://github.com/TfTHacker/obsidian42-brat)和 [BRAT 开发者指南](https://tfthacker.com/brat-developers)为准。
 
 ## 设置入口
 
 设置页全部使用英文，分为 Gallery、Indexing、Managed properties、Image button、Maintenance。
 
-1. 在 **Gallery → Default base file** 选择任意名称的 `.base` 文件。
-2. 在 **Default view** 选择该文件中的附件画廊视图。Base 尚无画廊时，先使用 **Maintenance → Repair gallery views** 预览并添加；已有表格、Cards、CMS、筛选和名称保留。
-3. 也可以使用 **Create base…** 明确创建一个新文件，再打开画廊。
+1. 未配置默认 Base 时，在 **Base setup** 选择 **Use existing Base** 或 **Create new Base**，两种方式只展开其一。
+2. 选用已有 Base：在 **Default base file** 输入 Vault 相对路径，候选只提示 `.base` 文件；选择候选只填写草稿，点击 **Apply** 后保存。
+3. 新建 Base：在 Vault 根目录创建，默认名 `Attachments Library.base`，可修改文件名。创建成功后自动选用；已有同名文件不会被覆盖。
+4. 已选用时隐藏新建入口。**Clear selection** 只取消默认关联，不删除文件。Base 或其父目录在 Obsidian 中移动后自动更新路径；插件停用期间发生移动可手动修改。
+5. 自动选用插件标记的全部附件画廊，或唯一画廊；有多个其他画廊时使用 **Default view** 选择。没有画廊的合法 Base 可以先选用，再通过 **Maintenance → Repair gallery views** 显式添加；选择和打开不会修复文件。
 
-默认 Base 设置只决定打开命令的目标。其他 Base 可以各自添加插件画廊，使用独立的查询、排序、分组和 Properties 配置。Base 筛选条件与附件索引范围分别设置。
+默认 Base 只决定打开命令的目标。其他 Base 仍可各自添加插件画廊，使用独立的查询、排序、分组和 Properties 配置。Base 筛选条件与附件索引范围分别设置。
 
-**Entire Vault** 模式隐藏 Attachment folder；切回文件夹模式会恢复已保存的目录。**Index notes folder** 只影响新索引位置，已有索引保留原位置。扩展名白名单始终禁止 Markdown 及其变体、Base 和 Canvas。
+**Entire Vault** 模式隐藏 Attachment folder；切回文件夹模式恢复已保存的目录。**Index notes folder** 使用文件夹候选和 **Apply** 保存，只影响新索引，目录按需建立。输入、候选预览及清空草稿不会保存设置；关闭设置页丢弃未应用草稿。
 
-新安装默认关闭自动索引。开启 **Create indexes for new attachments** 后，只处理以后新增的附件，无需先进行全库补建。
+新索引直接平铺到目标目录，例如附件 `Attachments/课程/图片.png` 对应 `Library/图片.png.md`。同名时依次使用 `图片.png (2).md`、`图片.png (3).md`，保留完整附件路径作为关联依据，不覆盖普通笔记。已有索引保留原位置，不重复创建；附件改名更新关联和受控预览，不移动索引。索引目录及其父目录在 Obsidian 中移动后跟踪更新设置。
+
+目录不能为 Vault 根目录、隐藏目录，不能包含整个附件索引范围；全库模式下不能选择已包含附件的目录。所有路径均为 Vault 相对路径。扩展名白名单始终禁止 Markdown 及其变体、Base 和 Canvas。
+
+新安装默认开启 **Create indexes for new attachments**；已有安装保留原来的有效开关值。自动创建从初始化完成后开始，只处理以后新增、包括同步到库的合格附件。开关开启不补建历史文件，也不要求先创建 Base；历史附件通过 **Scan attachments…** 明确预览补建。关闭会取消尚未执行的自动创建任务，已创建索引保留。
+
+扫描预览显示分配好的目标路径。同一批次的同名附件使用不同目标；预览后目录、附件身份或目标占用变化时，跳过受影响项并要求重新预览。
 
 ## 三条命令
 
@@ -76,8 +100,9 @@ node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/ba
 git diff --check
 ```
 
+- [1.5.0 设置与索引创建验收记录](docs/settings-indexing-acceptance-2026-11-14.md)
 - [1.4.0 实施约定](docs/implementation-plan-1.4.0.zh-CN.md)
 - [1.4.0 验收、截图与恢复记录](docs/implementation-acceptance-1.4.0-2026-10-26.md)
 - [1.3.0 及以前的 README 历史](docs/README-through-1.3.0.md)
 
-保留原项目作者信息与 [MIT 许可](LICENSE)。当前为正式发布的 1.4.0 版本。
+保留原项目作者信息与 [MIT 许可](LICENSE)。当前为正式发布的 1.5.0 版本。
