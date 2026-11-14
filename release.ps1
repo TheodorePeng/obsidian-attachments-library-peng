@@ -93,7 +93,9 @@ function Invoke-Step {
         Write-Host "    + $Command"
     }
     else {
-        Invoke-Expression $Command
+        # Out-Host keeps command output out of the pipeline, so it cannot leak
+        # into a function's return value.
+        Invoke-Expression $Command | Out-Host
     }
 }
 
