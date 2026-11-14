@@ -1,6 +1,6 @@
 # Attachments Library Peng
 
-基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.6.0**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。1.6.0 的隔离运行验收使用 macOS 上的 Obsidian 1.13.7，已发布为 GitHub Release，可通过 BRAT 安装或更新。
+基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.6.1**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。1.6.0 的隔离运行验收使用 macOS 上的 Obsidian 1.13.7；1.6.1 已发布为 GitHub Release，可通过 BRAT 安装或更新。
 
 附件保存在原位置，配套的普通 Markdown 索引承载 Properties、OCR 和说明。使用原生 Bases 查询与插件画廊管理这些索引。
 
@@ -30,15 +30,15 @@ BRAT 通过 GitHub API 读取 Release 列表。公开仓库的匿名请求按 IP
 
 1. **Gallery** 以状态卡显示当前 Base 完整路径、默认视图与连接状态。**Connect gallery… / Change…** 打开一个连接对话框，文件与视图一次提交；取消保留原连接。
 2. **Existing Base** 支持任何名称、位置和创建来源的合法 Base。只要有当前插件的兼容视图即可连接；创建标记不是资格证明。多个视图可在同一对话框选择。没有兼容视图时，**Add gallery view…** 先预览，再明确备份添加，保留原筛选、名称及其他视图。
-3. **New Base** 与已有文件表单互斥，在 Vault 根目录创建默认 `Attachments Library.base`，可修改文件名。**Create and connect** 成功后才替换原连接；同名文件不覆盖。文件创建后连接保存失败会显示新文件路径，供重新选用，不自动删除或复制。
+3. **New Base** 与已有文件表单互斥，在 Vault 根目录创建默认 `Attachment Index.base`，可修改文件名。**Create and connect** 成功后才替换原连接；同名文件不覆盖。文件创建后连接保存失败会显示新文件路径，供重新选用，不自动删除或复制。
 4. 状态卡的 **Open gallery** 只打开所选文件及视图。**More… → Disconnect** 只取消连接。文件丢失、配置损坏和视图变化都有 **Fix connection…** 入口，不自动重建文件。
 5. Gallery 连接、新索引位置、Base 筛选是三个独立概念。已有 Base 的筛选不自动改写；例如仍筛选 `Library/旧目录` 的画廊不会显示新目录中的索引，这并不表示连接失效。
 
-**New index notes folder** 是新 Markdown 索引的输出目录。输入和文件夹候选选择只改变草稿，**Save location** 保存，**Cancel changes** 取消；关闭设置页丢弃未保存草稿。保存反馈和错误就地显示，失败时保留输入并说明旧位置仍生效。不要把 `Gallery.base` 填入目录字段：该字段需要文件夹，例如 `资料/附件索引`。不存在的目录只在首次创建索引时建立。
+新安装的默认索引目录为 Vault 根目录下的 `Attachment Library`；升级用户保留已保存位置，旧配置缺少目录字段时继续使用 `Library`。默认目录只在首次创建索引时按需建立。**New index notes folder** 是新 Markdown 索引的输出目录。输入和文件夹候选选择只改变草稿，**Save location** 保存，**Cancel changes** 取消；关闭设置页丢弃未保存草稿。保存反馈和错误就地显示，失败时保留输入并说明旧位置仍生效。不要把 `Gallery.base` 填入目录字段：该字段需要文件夹，例如 `资料/附件索引`。不存在的目录只在首次创建索引时建立。
 
 **Entire Vault** 模式隐藏 Attachment folder；切回文件夹模式恢复已保存目录。Base 和索引目录及其父目录在 Obsidian 中移动后自动跟踪；插件停用期间的移动通过手动选用或重新发现恢复。
 
-新索引直接平铺到目标目录，例如附件 `Attachments/课程/图片.png` 对应 `Library/图片.png.md`。同名时依次使用 `图片.png (2).md`、`图片.png (3).md`，保留完整附件路径作为关联依据，不覆盖普通笔记。已有索引保留原位置，不重复创建；附件改名更新关联和受控预览，不移动索引。索引目录及其父目录在 Obsidian 中移动后跟踪更新设置。
+新索引直接平铺到目标目录，例如附件 `Attachments/课程/图片.png` 对应新安装默认目录下的 `Attachment Library/图片.png.md`。同名时依次使用 `图片.png (2).md`、`图片.png (3).md`，保留完整附件路径作为关联依据，不覆盖普通笔记。已有索引保留原位置，不重复创建；附件改名更新关联和受控预览，不移动索引。索引目录及其父目录在 Obsidian 中移动后跟踪更新设置。
 
 索引使用独立目录，不能选择 Vault 根目录、隐藏/配置目录、附件范围的祖先目录，或包含参与管理原附件的目录。相对路径支持中文和空格；桌面端也接受当前 Vault 内可核对的绝对路径，并转换显示为相对路径。Vault 外路径不接受。扩展名白名单始终禁止 Markdown 及其变体、Base 和 Canvas。
 
@@ -97,7 +97,9 @@ Schema 1／2 索引在任意位置均可识别，不依赖某次安装或旧 `da
 
 图标位于图片右侧居中，默认自动隐藏。普通点击打开索引；Command/Ctrl 点击默认打开 `url`，也可在设置中选择索引新标签。Command 悬浮图标或画廊名称时预览索引 Markdown，Hover Editor 可接续处理。
 
-卡片更多菜单中的“仅删除索引”保持原附件与其他文档不变；有外部索引引用时仍受保护。“删除附件及索引”先生成一个完整预览，列出回收目标、所有来源修改、阻塞原因及准确的修改前后内容。
+卡片更多菜单中的 **Delete index only…** 保持原附件与其他文档不变；有外部索引引用时仍受保护。“删除附件及索引”先生成一个完整预览，列出回收目标、所有来源修改、阻塞原因及准确的修改前后内容。
+
+若开启 `keep`，删除预览会说明原因；可以确认 **Turn off Keep…** 解除单个索引的保护。解除后仍须重新检查并单独确认删除。
 
 确认 **Remove references and move to trash** 后，移除匹配的 Markdown／Wiki 嵌入；普通链接保留标签或文件名文字；YAML 列表只移除匹配项，纯链接标量清空；Canvas 文件/本地链接节点和关联边一并移除，文本节点只清理引用，分组只清除背景；可定位的静态 HTML 图片/链接、Base 静态地址及直接来源属性按预览处理。保留其他正文、节点、边、属性和代码/数学/注释。
 
@@ -120,10 +122,11 @@ node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/ba
 git diff --check
 ```
 
+- [1.6.1 英文界面、附件目录范围与 Keep 解锁验收](docs/acceptance-1.6.1-2026-11-14.md)
 - [1.6.0 设置、接管与可恢复删除验收](docs/acceptance-1.6.0-2026-11-14.md)
 - [1.5.0 设置与索引创建验收记录](docs/settings-indexing-acceptance-2026-11-14.md)
 - [1.4.0 实施约定](docs/implementation-plan-1.4.0.zh-CN.md)
 - [1.4.0 验收、截图与恢复记录](docs/implementation-acceptance-1.4.0-2026-10-26.md)
 - [1.3.0 及以前的 README 历史](docs/README-through-1.3.0.md)
 
-保留原项目作者信息与 [MIT 许可](LICENSE)。1.6.0 已提交、推送并发布为 GitHub Release，BRAT 用户可直接安装或更新。
+保留原项目作者信息与 [MIT 许可](LICENSE)。1.6.1 已提交、推送并发布为 GitHub Release，BRAT 用户可直接安装或更新。
