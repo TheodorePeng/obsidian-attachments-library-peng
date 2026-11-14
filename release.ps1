@@ -1,6 +1,37 @@
+<#
+.SYNOPSIS
+    Publish a BRAT-installable Obsidian plugin release.
+
+.DESCRIPTION
+    The whole chain lives in this script: version bump, verification, commit,
+    tag, push, and the GitHub Release with the three BRAT assets (main.js,
+    manifest.json, styles.css).
+
+    The tag-triggered workflow in .github/workflows/release.yml is NOT relied
+    upon. It has never produced a single workflow run for this repository, so
+    the Release is created here. If a workflow ever does create the Release
+    first, this script detects it and replaces the assets with the local build
+    instead of failing.
+
+.PARAMETER Version
+    New version in x.y.z semver format (e.g. 1.6.2).
+
+.PARAMETER NotesFile
+    Release notes in Markdown (English + Chinese). When omitted, a bilingual
+    draft is generated from the commits since the previous tag.
+
+.PARAMETER DryRun
+    Print every command instead of running it. Nothing is written, committed,
+    pushed, tagged, or published.
+#>
 param(
     [Parameter(Mandatory, Position = 0, HelpMessage = "New version in x.y.z semver format (e.g. 1.0.3)")]
-    [string]$Version
+    [string]$Version,
+
+    [Parameter(HelpMessage = "Release notes in Markdown (English + Chinese)")]
+    [string]$NotesFile = '',
+
+    [switch]$DryRun
 )
 
 Set-StrictMode -Version Latest
@@ -25,53 +56,201 @@ if ($existingTag) {
     exit 1
 }
 
-# ── Bump versions ─────────────────────────────────────────────────────────────
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    Write-Error "GitHub CLI (gh) is not installed."
+    exit 1
+}
+gh auth status *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "GitHub CLI is not authenticated — run 'gh auth login' first."
+    exit 1
+}
+
+# ── Repository identity ──────────────────────────────────────────────────────
+#
+# This repository also has an 'upstream' remote, so the slug is always taken
+# from 'origin' and passed explicitly via --repo. Without it gh may pick the
+# wrong remote and publish to the upstream project.
+
+$originUrl = (git remote get-url origin).Trim()
+$slug = $originUrl -replace '^https?://[^/]+/', '' -replace '^git@[^:]+:', '' -replace '\.git$', ''
+if (-not $slug -or $slug -eq 'origin') {
+    Write-Error "Cannot resolve owner/repo from the 'origin' remote."
+    exit 1
+}
+
+$branch = (git rev-parse --abbrev-ref HEAD).Trim()
+$semverTags = @(git tag | Where-Object { $_ -match '^\d+\.\d+\.\d+$' })
+$prevTag = $null
+if ($semverTags.Count -gt 0) {
+    $prevTag = ($semverTags | Sort-Object { [version]$_ } | Select-Object -Last 1)
+}
+if ($prevTag) { $logRange = "$prevTag..HEAD" } else { $logRange = 'HEAD' }
+
+function Invoke-Step {
+    param([string]$Command)
+    if ($DryRun) {
+        Write-Host "    + $Command"
+    }
+    else {
+        Invoke-Expression $Command
+    }
+}
+
+# ── Bump versions ────────────────────────────────────────────────────────────
+#
+# Node edits manifest.json and versions.json so both scripts produce
+# byte-identical JSON. PowerShell's ConvertTo-Json would reorder keys and
+# Set-Content -Encoding UTF8 on Windows PowerShell 5.1 writes a BOM, which
+# breaks manifest.json parsing in Obsidian and BRAT.
 
 Write-Host "==> Updating version to $Version"
 
-$manifest = Get-Content manifest.json -Raw | ConvertFrom-Json
-$manifest.version = $Version
-$manifest | ConvertTo-Json -Depth 10 | Set-Content manifest.json -Encoding UTF8 -NoNewline
-Add-Content manifest.json "`n"
-
-if (Test-Path versions.json) {
-    $versions = Get-Content versions.json -Raw | ConvertFrom-Json
-    $versions | Add-Member -NotePropertyName $Version -NotePropertyValue $manifest.minAppVersion -Force
-    $versions | ConvertTo-Json -Depth 10 | Set-Content versions.json -Encoding UTF8 -NoNewline
-    Add-Content versions.json "`n"
+if ($DryRun) {
+    Write-Host "    + node: set manifest.json version = $Version, versions.json[`"$Version`"] = minAppVersion"
+    Write-Host "    + npm version $Version --no-git-tag-version"
+}
+else {
+    $bumpScript = @"
+const fs = require('fs');
+const version = '$Version';
+const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+manifest.version = version;
+fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+if (fs.existsSync('versions.json')) {
+    const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
+    versions[version] = manifest.minAppVersion;
+    fs.writeFileSync('versions.json', JSON.stringify(versions, null, 2) + '\n');
+}
+"@
+    node -e $bumpScript
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    npm version $Version --no-git-tag-version --silent
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-npm version $Version --no-git-tag-version --silent
-
-# ── Build & test ──────────────────────────────────────────────────────────────
+# ── Build & test ─────────────────────────────────────────────────────────────
 
 Write-Host "==> Running pipeline (lint + tests + build)"
-npm run pipeline
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Invoke-Step 'npm run pipeline'
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# ── Commit, tag, push ─────────────────────────────────────────────────────────
+Write-Host "==> Running acceptance scripts"
+Invoke-Step 'node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/base-formulas.acceptance.mjs tests/gallery-config.acceptance.mjs tests/target-selection.acceptance.mjs'
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "==> Committing version bump"
-git add manifest.json package.json package-lock.json versions.json
-git commit -m "Bump version to $Version"
+# ── Commit, tag, push ────────────────────────────────────────────────────────
+
+Write-Host "==> Committing release metadata"
+Invoke-Step 'git add -- manifest.json package.json package-lock.json versions.json'
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Invoke-Step "git commit -m `"chore: release $Version`""
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "==> Creating tag $Version"
-git tag $Version
+Invoke-Step "git tag $Version"
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "==> Pushing commit and tag"
-git push
-git push origin $Version
+Invoke-Step "git push origin $branch"
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Invoke-Step "git push origin $Version"
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# ── GitHub release ────────────────────────────────────────────────────────────
+# ── Release notes ────────────────────────────────────────────────────────────
+
+function Get-NoteBody {
+    param([ValidateSet('en', 'zh')][string]$Mode)
+    $subjects = @(git log --no-merges --pretty=format:'%s' $logRange)
+    foreach ($subject in $subjects) {
+        if (-not $subject) { continue }
+        $clean = $subject -replace '^[a-z]+(\([^)]*\))?:\s*', ''
+        if ($Mode -eq 'zh') {
+            if ($subject -match '^feat') { "- 新功能：$clean" }
+            elseif ($subject -match '^fix') { "- 修复：$clean" }
+            elseif ($subject -match '^docs') { "- 文档：$clean" }
+            else { "- 维护：$subject" }
+        }
+        else {
+            if ($subject -match '^feat') { "- Feature: $clean" }
+            elseif ($subject -match '^fix') { "- Fix: $clean" }
+            elseif ($subject -match '^docs') { "- Documentation: $clean" }
+            else { "- Maintenance: $subject" }
+        }
+    }
+}
+
+$generatedNotes = $null
+if ($NotesFile) {
+    if (-not (Test-Path $NotesFile)) {
+        Write-Error "Notes file not found: $NotesFile"
+        exit 1
+    }
+    $notesOut = (Resolve-Path $NotesFile).Path
+    Write-Host "==> Using release notes from $notesOut"
+}
+elseif ($DryRun) {
+    $notesOut = "(auto-generated from $logRange)"
+    Write-Host "==> Would generate bilingual notes from $logRange"
+}
+else {
+    $generatedNotes = Join-Path ([System.IO.Path]::GetTempPath()) ("brat-release-notes-" + [System.IO.Path]::GetRandomFileName())
+    $minApp = (Get-Content manifest.json -Raw | ConvertFrom-Json).minAppVersion
+    $body = @(
+        '## Changes'
+        (Get-NoteBody -Mode en)
+        ''
+        '## 变更说明'
+        (Get-NoteBody -Mode zh)
+        ''
+        '## Requirements'
+        "- Minimum Obsidian version is unchanged: ``$minApp``."
+        "- Installed through BRAT from ``$slug``; each release ships ``main.js``, ``manifest.json`` and ``styles.css``."
+    ) -join "`n"
+    [System.IO.File]::WriteAllText($generatedNotes, $body, (New-Object System.Text.UTF8Encoding $false))
+    $notesOut = $generatedNotes
+    Write-Host "==> Generated release notes at $notesOut"
+}
+
+# ── GitHub release ───────────────────────────────────────────────────────────
 #
-# The Release itself is created by .github/workflows/release.yml, which runs on
-# the tag push above and uploads main.js, manifest.json and styles.css.
-# Do not run `gh release create` here: it would race that workflow and the
-# manual asset list would omit styles.css.
+# The Release is the BRAT distribution source: BRAT downloads main.js,
+# manifest.json and styles.css from it, so all three must be uploaded.
 
-Write-Host "==> GitHub release is created by .github/workflows/release.yml"
-Write-Host "    Watch:  gh run watch"
-Write-Host "    Check:  gh release view $Version"
+Write-Host "==> Publishing GitHub Release $Version"
+
+function Publish-Release {
+    gh release view $Version --repo $slug *> $null
+    if ($LASTEXITCODE -eq 0) {
+        # A workflow or an earlier attempt already created it: replace the
+        # assets with the local build and (re)apply the notes.
+        Invoke-Step "gh release upload $Version main.js manifest.json styles.css --repo $slug --clobber"
+        Invoke-Step "gh release edit $Version --repo $slug --notes-file `"$notesOut`" --draft=false --latest"
+        return 0
+    }
+    Invoke-Step "gh release create $Version --repo $slug --verify-tag --title $Version --notes-file `"$notesOut`" --latest main.js manifest.json styles.css"
+    if ($DryRun) { return 0 }
+    if ($LASTEXITCODE -eq 0) { return 0 }
+    Write-Host "==> 'gh release create' failed — checking whether a Release already exists" -ForegroundColor Yellow
+    gh release view $Version --repo $slug *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-Step "gh release upload $Version main.js manifest.json styles.css --repo $slug --clobber"
+        Invoke-Step "gh release edit $Version --repo $slug --notes-file `"$notesOut`" --draft=false --latest"
+        return 0
+    }
+    return 1
+}
+
+if ((Publish-Release) -ne 0) {
+    Write-Error "Could not publish the GitHub Release."
+    exit 1
+}
+
+Invoke-Step "gh release view $Version --repo $slug"
+
+if ($generatedNotes -and (Test-Path $generatedNotes)) {
+    Remove-Item $generatedNotes -Force
+}
 
 Write-Host ""
-Write-Host "Tagged & pushed $Version — GitHub Release 由 release workflow 创建。"
+Write-Host "✓ $Version tagged, pushed and published — BRAT 用户可直接安装或更新。"
