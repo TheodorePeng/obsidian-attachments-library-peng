@@ -65,8 +65,23 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     Write-Error "GitHub CLI (gh) is not installed."
     exit 1
 }
-gh auth status *> $null
-if ($LASTEXITCODE -ne 0) {
+
+# `gh auth status` also validates the token against the API, so a transient
+# network failure is indistinguishable from "not logged in". Retry before
+# giving up, otherwise a blip aborts an otherwise healthy release.
+$ghAuthOk = $false
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+    gh auth status *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $ghAuthOk = $true
+        break
+    }
+    if ($attempt -lt 3) {
+        Write-Host "==> 'gh auth status' failed, retrying ($attempt/3)..."
+        Start-Sleep -Seconds 3
+    }
+}
+if (-not $ghAuthOk) {
     Write-Error "GitHub CLI is not authenticated — run 'gh auth login' first."
     exit 1
 }

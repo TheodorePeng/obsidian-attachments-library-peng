@@ -74,7 +74,7 @@ if ! git diff --quiet || ! git diff --staged --quiet; then
     exit 1
 fi
 
-if git tag --list | grep -qx "$VERSION"; then
+if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
     echo "Error: tag '$VERSION' already exists — never retag an existing version" >&2
     exit 1
 fi
@@ -84,7 +84,21 @@ if ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! gh auth status >/dev/null 2>&1; then
+# `gh auth status` also validates the token against the API, so a transient
+# network failure is indistinguishable from "not logged in". Retry before
+# giving up, otherwise a blip aborts an otherwise healthy release.
+GH_AUTH_OK=0
+for attempt in 1 2 3; do
+    if gh auth status >/dev/null 2>&1; then
+        GH_AUTH_OK=1
+        break
+    fi
+    if [ "$attempt" -lt 3 ]; then
+        echo "==> 'gh auth status' failed, retrying ($attempt/3)…" >&2
+        sleep 3
+    fi
+done
+if [ "$GH_AUTH_OK" -ne 1 ]; then
     echo "Error: GitHub CLI is not authenticated — run 'gh auth login' first" >&2
     exit 1
 fi
