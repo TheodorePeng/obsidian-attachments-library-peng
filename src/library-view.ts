@@ -72,7 +72,7 @@ export function previewAttachment(app: App, record: AttachmentRecord): void {
 export async function requestDeletion(app: App, services: LibraryServices, paths: string[], mode: DeleteMode): Promise<void> {
     try {
         const plan = await services.deletions.prepare(paths, mode);
-        if (!await confirmDeletion(app, plan)) return;
+        if (!await confirmDeletion(app, plan, () => services.deletions.prepare(paths, mode))) return;
         const result = await services.deletions.execute(plan);
         await confirmAction(app, 'Deletion ' + result.status, [result.message, ...result.steps.map(s => s.status + ': ' + s.path + ' — ' + s.recovery)], 'Close');
     }

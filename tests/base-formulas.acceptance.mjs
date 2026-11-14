@@ -77,8 +77,8 @@ test('property changes across rows change the collected targets', () => {
     after.links.map((l) => [l.target, l.rowPath]),
     [['New.md', 'a.md']],
   );
-  // Missing property is null: a bare link() over it is an unusable target.
-  assert.ok(after.issues.some((issue) => /not a usable string/i.test(issue.reason)));
+  // A null property cannot point to a file.
+  assert.deepEqual(after.issues, []);
   assert.deepEqual(after.dependencies, ['URL']);
 });
 

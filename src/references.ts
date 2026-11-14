@@ -1,9 +1,12 @@
+import { localTarget } from './local-target';
+import { yamlSource, yamlStrings, duplicateYamlKeys } from './yaml-source';
+import { isMap, isScalar } from 'yaml';
 import { effectiveKeep } from './managed-properties';
-import { App, TFile, parseYaml } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { AttachmentRecord, AttachmentRegistry, PREVIEW_END, PREVIEW_START, readDocument } from './registry';
 import { UsageState } from './types';
 import { parseMarkdownLinks, externalLink, TextRange } from './markdown-links';
-import { analyzeBaseExpressions } from './base-formulas';
+import { analyzeBaseExpressions, baseFilterMatches } from './base-formulas';
 export interface ReferenceOccurrence {
     sourcePath: string;
     targetPath: string;
@@ -12,8 +15,12 @@ export interface ReferenceOccurrence {
     property?: string;
     nodeId?: string;
     formula?: string;
+    originPath?: string;
+    from?: number;
+    to?: number;
+    editable?: boolean;
 }
-export interface ReferenceIssue { sourcePath: string; reason: string; affectedPaths: string[] | null; }
+export interface ReferenceIssue { sourcePath: string; reason: string; affectedPaths: string[] | null; count?: number; }
 export interface Usage {
     state: UsageState; count: number; sources: string[]; indexSources: string[]; reasons: string[];
     assetSources: string[]; assetCheckComplete: boolean; indexCheckComplete: boolean;
@@ -35,7 +42,7 @@ export class ReferenceService {
     private cacheSnapshots = new Map<string, { text: string; cache: unknown }>();
     private changedText = new Map<string, string>();
     private timer?: number; private tail: Promise<void> = Promise.resolve(); private queued = 0; private disposed = false;
-    constructor(private app: App, private registry: AttachmentRegistry) {}
+    constructor(private app: App, private registry: AttachmentRegistry, private readonlySnapshot = false, private contentOverrides: ReadonlyMap<string, string> = new Map()) {}
     markDirty(path: string): void { if (path.toLowerCase().endsWith('.md')) this.waiting.add(path); this.schedule(path); }
     cacheChanged(path: string, text: string): void { this.waiting.delete(path); this.changedText.set(path, text); this.schedule(path); }
     schedule(path: string): void {
@@ -50,7 +57,7 @@ export class ReferenceService {
         if (!this.ready) await this.refresh();
         else if (this.dirty.size) await this.refresh([...this.dirty]);
     }
-    async refresh(paths?: string[]): Promise<void> {
+    async refresh(paths?: string[], notify = true): Promise<void> {
         if (this.disposed) return;
         if (!paths) this.dirty.clear(); else paths.forEach(path => this.dirty.delete(path));
         if (!this.dirty.size) window.clearTimeout(this.timer);
@@ -58,7 +65,7 @@ export class ReferenceService {
         const run = this.tail.then(async () => {
             try { if (!this.disposed) await this.scan(paths); }
             finally { this.queued--; this.pending = this.queued > 0 || this.dirty.size > 0; }
-            if (!this.disposed && !this.pending) await this.onRefreshed?.();
+            if (notify && !this.disposed && !this.pending) await this.onRefreshed?.();
         });
         this.tail = run.catch(() => {}); await run;
     }
@@ -95,13 +102,17 @@ export class ReferenceService {
     private async scanSource(file: TFile): Promise<SourceResult> {
         const result: SourceResult = { targets: new Set(), occurrences: [], issues: [], excluded: [] };
         const cached = this.sourceTexts.get(file.path);
-        const text = this.reuseText.has(file.path) && cached && cached.mtime === file.stat.mtime && cached.size === file.stat.size && !this.waiting.has(file.path) ? cached.text : await this.app.vault.cachedRead(file);
+        const text = this.contentOverrides.get(file.path) ?? (this.reuseText.has(file.path) && cached && cached.mtime === file.stat.mtime && cached.size === file.stat.size && !this.waiting.has(file.path) ? cached.text : await (this.readonlySnapshot ? this.app.vault.read(file) : this.app.vault.cachedRead(file)));
         this.reuseText.delete(file.path); this.sourceTexts.set(file.path, { text, mtime: file.stat.mtime, size: file.stat.size });
         const issue = (reason: string, affectedPaths: string[] | null = null) => result.issues.push({ sourcePath: file.path, reason, affectedPaths });
         const add = (raw: string, location: Partial<ReferenceOccurrence> = {}, sourceContext = file.path, excluded = false) => {
             if (isRemote(raw) || raw.startsWith('#')) return;
-            if (/^(file|obsidian):/i.test(raw)) { issue('Unresolved local application URL: ' + file.path); return; }
-            let link: string; try { link = decodeURIComponent(raw.split('#')[0]); } catch { issue('Invalid local link: ' + file.path); return; }
+            const decoded = /^(file|obsidian):/i.test(raw);
+            const local = localTarget(this.app, raw);
+            if (local.ignore) return;
+            if (local.unknown) { issue('Unresolved local application URL: ' + file.path); return; }
+            raw = local.path!;
+            let link: string; try { link = decoded ? raw.split('#')[0] : decodeURIComponent(raw.split('#')[0]); } catch { issue('Invalid local link: ' + file.path); return; }
             const target = this.app.metadataCache.getFirstLinkpathDest(link, sourceContext);
             if (target) {
                 const occurrence: ReferenceOccurrence = { sourcePath: file.path, targetPath: target.path, kind: 'link', ...location };
@@ -114,37 +125,55 @@ export class ReferenceService {
         };
         const explicit = (value: string, key: string, location: Partial<ReferenceOccurrence> = {}) => {
             const parsed = this.parse(value, key);
-            for (const link of parsed.links) add(link.link, { kind: link.kind, line: link.line, ...location });
+            for (const link of parsed.links) add(link.link, { kind: link.kind, line: link.line, from: link.offset, to: link.end, editable: true, ...location });
             if (parsed.uncertain) issue('Unsupported local HTML resource: ' + file.path);
         };
         if (file.extension.toLowerCase() === 'canvas') {
-            const canvas = JSON.parse(text) as { nodes?: { id?: string; type?: string; file?: string; text?: string }[] };
+            const canvas = JSON.parse(text) as { nodes?: { id?: string; type?: string; file?: string; text?: string; url?: string; background?: string }[] };
             if (!Array.isArray(canvas?.nodes)) throw new Error('Invalid Canvas');
             for (const node of canvas.nodes) {
                 if (node.type === 'file' && typeof node.file === 'string') add(node.file, { kind: 'canvas', nodeId: node.id });
+                if (node.type === 'link' && typeof node.url === 'string') add(node.url, { kind: 'canvas', nodeId: node.id });
+                if (node.type === 'group' && typeof node.background === 'string') add(node.background, { kind: 'canvas', nodeId: node.id, property: 'background' });
                 if (node.type === 'text' && typeof node.text === 'string') explicit(node.text, file.path + ':' + node.id, { kind: 'canvas', nodeId: node.id });
             }
         } else if (file.extension.toLowerCase() === 'base') {
             if (!text.trim()) return result;
-            const config = parseYaml(text) as Record<string, unknown>;
+            const yaml = yamlSource(text), config = yaml.toJS() as Record<string, unknown>;
             if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid Base');
             const formulas: Record<string, unknown> = {};
-            if (config.formulas && typeof config.formulas === 'object') Object.assign(formulas, config.formulas);
+            const definitions = new Map<string, string[]>();
+            const define = (name: string, value: string) => definitions.set(name, [...(definitions.get(name) ?? []), value]);
+            if (isMap(yaml.contents)) for (const pair of yaml.contents.items) {
+                if (isScalar(pair.key) && pair.key.value === 'formulas' && isMap(pair.value)) for (const formula of pair.value.items) {
+                    if (isScalar(formula.key) && isScalar(formula.value) && typeof formula.value.value === 'string') define(String(formula.key.value), formula.value.value);
+                }
+            }
+            if (duplicateYamlKeys(text).includes('filters')) config.filters = undefined;
             // Compatibility for explicit standalone constants outside the standard formulas mapping.
             for (const [key, value] of Object.entries(config)) if (!['views', 'filters', 'properties', 'summaries', 'formulas'].includes(key) && typeof value === 'string') {
-                if (/\b(?:link|image|file)\s*\(/.test(value)) formulas[key] = value;
+                if (/\b(?:link|image|file)\s*\(/.test(value)) define(key, value);
                 else explicit(value, file.path + ':' + key, { kind: 'base', formula: key });
             }
-            const roots = Object.keys(formulas).filter(key => typeof formulas[key] === 'string' && /\b(?:link|image|file)\s*\(/.test(formulas[key]));
-            const analysis = analyzeBaseExpressions(formulas, [...this.metadata].map(([path, properties]) => ({ path, properties })), roots);
-            for (const target of analysis.links) add(target.target, { kind: 'base', formula: target.formula }, target.rowPath ?? file.path);
-            for (const problem of analysis.issues) issue('Base formula ' + problem.formula + ': ' + problem.reason);
+            const roots: string[] = [];
+            for (const [name, values] of definitions) {
+                formulas[name] = values.length === 1 ? values[0] : '__duplicateFormulaNeedsReview()';
+                if (values.some(value => /\b(?:link|image|file)\s*\(/.test(value))) roots.push(name);
+                if (values.length > 1) values.forEach((value, i) => { const alias = name + ' [duplicate ' + (i + 1) + ']'; formulas[alias] = value; if (/\b(?:link|image|file)\s*\(/.test(value)) roots.push(alias); });
+            }
+            const analysis = analyzeBaseExpressions(formulas, [...this.metadata].map(([path, properties]) => ({ path, properties })).filter(row => baseFilterMatches(config.filters, row) !== false), roots);
+            for (const target of analysis.links) add(target.target, { kind: 'base', formula: target.formula, property: target.property, originPath: target.property ? target.rowPath : undefined }, target.rowPath ?? file.path, target.rowNavigation === true || !!target.rowPath && ['attachment', '_filePath'].includes(target.property ?? '') && this.registry.byIndex.has(target.rowPath));
+            for (const problem of analysis.issues) issue('Base formula ' + problem.formula + ': ' + problem.reason + (problem.count ? ' (' + problem.count + ' rows)' : ''));
         } else {
-            const document = readDocument(text); this.metadata.set(file.path, document.metadata);
-            const cache = this.app.metadataCache.getFileCache(file);
-            if (!cache) issue('Metadata cache pending: ' + file.path);
+            const document = readDocument(text);
+            const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1];
+            const properties = { ...document.metadata };
+            if (frontmatter) for (const key of duplicateYamlKeys(frontmatter)) properties[key] = { ambiguousYamlProperty: true };
+            this.metadata.set(file.path, properties);
+            const cache = this.readonlySnapshot ? null : this.app.metadataCache.getFileCache(file);
+            if (!cache && !this.readonlySnapshot) issue('Metadata cache pending: ' + file.path);
             const previous = this.cacheSnapshots.get(file.path);
-            if (this.waiting.has(file.path) || (this.changedText.has(file.path) && this.changedText.get(file.path) !== text) || (previous && previous.text !== text && previous.cache === cache && this.changedText.get(file.path) !== text)) issue('Metadata cache stale: ' + file.path);
+            if (!this.readonlySnapshot && (this.waiting.has(file.path) || (this.changedText.has(file.path) && this.changedText.get(file.path) !== text) || (previous && previous.text !== text && previous.cache === cache && this.changedText.get(file.path) !== text))) issue('Metadata cache stale: ' + file.path);
             this.cacheSnapshots.set(file.path, { text, cache });
             const record = this.registry.byIndex.get(file.path);
             const ranges: TextRange[] = [{ from: 0, to: text.length - document.body.length }];
@@ -152,16 +181,16 @@ export class ReferenceService {
             if (record && start >= 0 && end >= start) ranges.push({ from: start, to: end + PREVIEW_END.length });
             let legacy: { original: string; link: string } | undefined;
             if (record && start < 0) {
-                const own = (cache?.embeds ?? []).filter(e => this.app.metadataCache.getFirstLinkpathDest(e.link, file.path)?.path === record.assetPath);
+                const own = (this.readonlySnapshot ? parseMarkdownLinks(text).links.filter(link => link.kind === 'embed').map(link => ({ link: link.link, original: text.slice(link.offset, link.end) })) : cache?.embeds ?? []).filter(e => this.app.metadataCache.getFirstLinkpathDest(e.link, file.path)?.path === record.assetPath);
                 if (own.length === 1 && document.body.split('\n').some(line => line.trim() === own[0].original)) {
                     legacy = own[0]; const offset = text.indexOf(legacy.original, ranges[0].to); ranges.push({ from: offset, to: offset + legacy.original.length });
                 } else if (own.length) issue('Ambiguous legacy preview: ' + file.path, [record.assetPath]);
             }
             const masked = text.split('').map((char, offset) => ranges.some(range => offset >= range.from && offset < range.to) && char !== '\n' ? ' ' : char).join('');
             const parsed = this.parse(masked, file.path);
-            for (const link of parsed.links) add(link.link, { kind: link.kind, line: link.line });
+            for (const link of parsed.links) add(link.link, { kind: link.kind, line: link.line, from: link.offset, to: link.end, editable: true });
             if (parsed.uncertain) issue('Unsupported local HTML resource: ' + file.path);
-            for (const link of [...(cache?.links ?? []), ...(cache?.embeds ?? [])]) {
+            for (const link of this.readonlySnapshot ? [] : [...(cache?.links ?? []), ...(cache?.embeds ?? [])]) {
                 const offset = link.position?.start.offset;
                 if (link === legacy || (offset !== undefined && [...ranges, ...parsed.ignored].some(range => offset >= range.from && offset < range.to))) continue;
                 add(link.link, { kind: (cache?.embeds ?? []).includes(link) ? 'embed' : 'link', line: link.position?.start.line !== undefined ? link.position.start.line + 1 : undefined });
@@ -177,7 +206,8 @@ export class ReferenceService {
                 else if (value && typeof value === 'object') for (const [key, nested] of Object.entries(value)) visit(nested, property + '.' + key);
             };
             for (const [key, value] of Object.entries(document.metadata)) visit(value, key);
-            for (const link of cache?.frontmatterLinks ?? []) {
+            if (frontmatter) for (const value of yamlStrings(frontmatter, record ? new Set(['attachment']) : undefined)) explicit(value, file.path + ':yaml:' + value, { kind: 'property' });
+            for (const link of this.readonlySnapshot ? [] : cache?.frontmatterLinks ?? []) {
                 if (record && (link.key === 'attachment' || link.key.startsWith('attachment.')) && (link.link.split('#')[0] === record.assetPath || this.app.metadataCache.getFirstLinkpathDest(link.link, file.path)?.path === record.assetPath)) continue;
                 const target = this.app.metadataCache.getFirstLinkpathDest(link.link, file.path);
                 if (!result.occurrences.some(o => o.kind === 'property' && o.property === link.key && o.targetPath === target?.path)) add(link.link, { kind: 'property', property: link.key });

@@ -48,7 +48,7 @@ it('creates only at root, prevents duplicate clicks and never binds an occupied 
     const create=f.app.vault.create.getMockImplementation()!; let release!:()=>void; const gate=new Promise<void>(r=>release=r);
     f.app.vault.create.mockImplementation(async(path:string,text:string)=>{await gate;return create(path,text);});
     const pending=f.p.createGallery(); await expect(f.p.createGallery()).rejects.toThrow('running'); await expect(f.p.selectBase('Taken.base')).rejects.toThrow('running'); release(); await pending;
-    expect(f.p.settings.defaultBasePath).toBe('Attachments Library.base'); expect(f.p.settings.defaultViewName).toBeTruthy(); await expect(f.p.createGallery('Another')).rejects.toThrow('Clear');
+    expect(f.p.settings.defaultBasePath).toBe('Attachments Library.base'); expect(f.p.settings.defaultViewName).toBeTruthy(); await f.p.createGallery('Another'); expect(f.p.settings.defaultBasePath).toBe('Another.base');
     await f.p.clearBase(); expect(f.files.has('Attachments Library.base')).toBe(true); expect(f.p.settings.defaultViewOwner).toBe('');
 });
 it('preserves old Base on validation or save failure and leaves a created file available for recovery',async()=>{

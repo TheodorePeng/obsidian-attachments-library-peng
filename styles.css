@@ -75,3 +75,42 @@ textarea.alp-property-input { min-height:96px; resize:vertical; }
 @media(hover:none),(pointer:coarse) { .alp-gallery-select,.alp-gallery-card-actions,.alp-property-edit { opacity:1; } }
 
 .alp-gallery-name > .alp-property-label { display:none; }
+
+/* Settings: theme-native surfaces, explicit state and readable full paths. */
+.alp-gallery-card, .alp-folder-settings {
+    padding: 16px; margin: 8px 0 24px; border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m, 8px); background: var(--background-secondary);
+    color: var(--text-normal); font-family: var(--font-interface, system-ui);
+}
+.alp-gallery-card p, .alp-folder-settings p { margin: 8px 0 12px; }
+.alp-gallery-status { font-weight: 600; font-size: 16px; }
+.alp-field-label { display: block; font-weight: 600; margin: 12px 0 8px; }
+.alp-path { font-family: var(--font-monospace, ui-monospace); overflow-wrap: anywhere; white-space: pre-wrap; }
+.alp-path-input { width: 100%; min-height: 44px; font-family: var(--font-monospace, ui-monospace); }
+.alp-helper { font-size: var(--font-ui-small, 12px); color: var(--text-muted); }
+.alp-field-feedback { min-height: 20px; overflow-wrap: anywhere; }
+.alp-field-feedback[role=alert], .alp-field-error { color: var(--text-error); }
+.alp-card-actions, .alp-dialog-actions, .alp-segmented { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
+.alp-card-actions button, .alp-dialog-actions button, .alp-segmented button, .alp-connection select { min-height: 44px; }
+.alp-dialog-actions { justify-content: flex-end; }
+.alp-segmented { margin: 0 0 16px; }
+.alp-segmented [aria-pressed=true] { box-shadow: inset 0 0 0 2px var(--interactive-accent); font-weight: 600; }
+.alp-connection { max-width: 640px; width: 100%; font-size: var(--font-ui-medium, 14px); }
+.alp-connection select { width: 100%; }
+.alp-connection [hidden] { display: none; }
+.alp-restore-candidate { display: flex; align-items: center; gap: 12px; min-height: 44px; overflow-wrap: anywhere; }
+.alp-gallery-card button:focus-visible, .alp-folder-settings :focus-visible, .alp-connection :focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 3px; }
+@media (max-width: 480px) {
+    .alp-card-actions, .alp-dialog-actions { align-items: stretch; flex-direction: column; }
+    .alp-card-actions button, .alp-dialog-actions button { width: 100%; }
+}
+.alp-delete-item [hidden] { display: none; }
+.alp-confirm-list pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Native accent white text falls below 4.5:1 in the default theme; retain its hue with a darker surface. */
+.alp-settings .mod-cta, .alp-connection .mod-cta, .alp-dialog-actions .mod-cta, .alp-confirm-list + .setting-item .mod-cta { background-color: color-mix(in srgb, var(--interactive-accent) 80%, black); color: var(--text-on-accent); }
+.alp-settings .mod-cta:hover, .alp-connection .mod-cta:hover, .alp-dialog-actions .mod-cta:hover, .alp-confirm-list + .setting-item .mod-cta:hover { background-color: color-mix(in srgb, var(--interactive-accent) 72%, black); }
+.alp-settings .setting-item-description { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+    .alp-settings .setting-item-control { flex-wrap: wrap; min-width: 0; gap: 8px; }
+    .alp-settings .setting-item-control button { max-width: 100%; min-height: 44px; white-space: normal; }
+}

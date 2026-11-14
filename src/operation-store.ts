@@ -9,22 +9,22 @@ export function fingerprint(text: string): string {
 export class OperationStore {
     lastReport = '';
     context = '';
-    constructor(private root?: string) {}
+    constructor(protected root?: string) {}
     async save(kind: string, files: { path: string; content: string }[], details: unknown): Promise<string> {
         const { mkdir, writeFile } = require('fs/promises') as typeof import('fs/promises');
-        const { join } = require('path') as typeof import('path');
+        const nodePath = require('path') as typeof import('path');
         const { homedir } = require('os') as typeof import('os');
         const { randomUUID } = require('crypto') as typeof import('crypto');
-        const root = this.root ?? join(homedir(), '.local/share/attachments-library-peng/backups');
-        const directory = join(root, new Date().toISOString().replace(/[:.]/g, '-') + '-' + randomUUID());
+        const root = this.root ?? nodePath.join(homedir(), '.local/share/attachments-library-peng/backups');
+        const directory = nodePath.join(root, new Date().toISOString().replace(/[:.]/g, '-') + '-' + randomUUID());
         await mkdir(directory, { recursive: true, mode: 0o700 });
         const manifest: { path: string; backup: string; sha256: string }[] = [];
         for (const [i, file] of files.entries()) {
             const name = i + '.backup';
-            await writeFile(join(directory, name), file.content, { mode: 0o600 });
+            await writeFile(nodePath.join(directory, name), file.content, { mode: 0o600 });
             manifest.push({ path: file.path, backup: name, sha256: fingerprint(file.content) });
         }
-        await writeFile(join(directory, 'report.json'), JSON.stringify({ kind, vault: this.context, files: manifest, details }, null, 2), { mode: 0o600 });
+        await writeFile(nodePath.join(directory, 'report.json'), JSON.stringify({ kind, vault: this.context, files: manifest, details }, null, 2), { mode: 0o600 });
         this.lastReport = directory;
         return directory;
     }

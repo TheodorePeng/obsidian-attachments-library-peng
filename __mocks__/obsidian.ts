@@ -133,3 +133,6 @@ export class AbstractInputSuggest<T> {
     renderSuggestion(_item: T, _el: HTMLElement) {}
     selectSuggestion(_item: T, _event: any) {}
 }
+
+export const Platform = { isDesktopApp: true, isMobile: false };
+export class FileSystemAdapter { constructor(private root = '/test-vault') {} getBasePath() { return this.root; } }

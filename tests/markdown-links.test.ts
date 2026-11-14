@@ -6,7 +6,7 @@ it('parses actual links and definitions while ignoring math, code and comments',
     expect(parsed.uncertain).toBe(false); expect(parsed.ignored.length).toBeGreaterThanOrEqual(4);
 });
 it('keeps local HTML conservative including unquoted attributes and ignores remote HTML', () => {
-    expect(parseMarkdownLinks('<img src=a.png>').uncertain).toBe(true);
+    expect(parseMarkdownLinks('<img src=a.png>').links[0].link).toBe('a.png');
     expect(parseMarkdownLinks('<img src="https://example.com/a.png">').uncertain).toBe(false);
     expect(parseMarkdownLinks('<!-- <img src="a.png"> -->').uncertain).toBe(false);
 });

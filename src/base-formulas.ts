@@ -19,6 +19,8 @@ export interface BaseFormulaRow {
 }
 
 export interface BaseFormulaLink {
+  rowNavigation?: boolean;
+  property?: string;
   target: string;
   formula: string;
   rowPath?: string;
@@ -28,6 +30,7 @@ export interface BaseFormulaIssue {
   reason: string;
   formula: string;
   rowPath?: string;
+  count?: number;
 }
 
 export interface BaseFormulaAnalysis {
@@ -57,9 +60,9 @@ type Token =
   | { kind: 'number'; value: number }
   | { kind: 'keyword'; value: 'true' | 'false' | 'null' | 'this' }
   | { kind: 'ident'; value: string }
-  | { kind: 'punct'; value: '(' | ')' | ',' | '.' | '[' | ']' | '+' };
+  | { kind: 'punct'; value: string };
 
-const PUNCTUATION = new Set(['(', ')', ',', '.', '[', ']', '+']);
+const PUNCTUATION = new Set(['(', ')', ',', '.', '[', ']', '+', '!', '>', '<']);
 const KEYWORDS = new Set(['true', 'false', 'null', 'this']);
 
 function tokenize(source: string): Token[] {
@@ -134,8 +137,10 @@ function tokenize(source: string): Token[] {
       }
       continue;
     }
+    const operator = source.slice(i, i + 2);
+    if (['==', '!=', '&&', '||', '>=', '<='].includes(operator)) { tokens.push({ kind: 'punct', value: operator }); i += 2; continue; }
     if (PUNCTUATION.has(ch)) {
-      tokens.push({ kind: 'punct', value: ch as '(' | ')' | ',' | '.' | '[' | ']' | '+' });
+      tokens.push({ kind: 'punct', value: ch });
       i += 1;
       continue;
     }
@@ -154,7 +159,11 @@ type Expr =
   | { type: 'formula-ref'; name: string }
   | { type: 'this-context' }
   | { type: 'call'; name: string; args: Expr[] }
-  | { type: 'concat'; left: Expr; right: Expr };
+  | { type: 'concat'; left: Expr; right: Expr }
+  | { type: 'binary'; op: string; left: Expr; right: Expr }
+  | { type: 'not'; value: Expr }
+  | { type: 'array'; items: Expr[] }
+  | { type: 'file-prop'; name: string };
 
 class Parser {
   private position = 0;
@@ -189,12 +198,12 @@ class Parser {
     }
   }
 
-  parseExpression(): Expr {
+  parseExpression(min = 0): Expr {
     let left = this.parsePrimary();
-    while (this.peek()?.kind === 'punct' && this.peek()?.value === '+') {
-      this.take();
-      const right = this.parsePrimary();
-      left = { type: 'concat', left, right };
+    const precedence: Record<string, number> = { '||': 1, '&&': 2, '==': 3, '!=': 3, '>': 3, '<': 3, '>=': 3, '<=': 3, '+': 4 };
+    while (this.peek()?.kind === 'punct' && (precedence[String(this.peek()?.value)] ?? -1) >= min) {
+      const op = String(this.take()!.value), right = this.parseExpression(precedence[op] + 1);
+      left = op === '+' ? { type: 'concat', left, right } : { type: 'binary', op, left, right };
     }
     return left;
   }
@@ -203,6 +212,15 @@ class Parser {
     const token = this.take();
     if (!token) throw new Error('unexpected end of input');
 
+    if (token.kind === 'punct' && token.value === '!') return { type: 'not', value: this.parsePrimary() };
+    if (token.kind === 'punct' && token.value === '[') {
+      const items: Expr[] = [];
+      if (this.peek()?.value !== ']') { items.push(this.parseExpression()); while (this.peek()?.value === ',') { this.take(); items.push(this.parseExpression()); } }
+      this.expectPunctuation(']');
+      const array: Expr = { type: 'array', items };
+      if (this.peek()?.value === '.') { this.take(); const method = this.take(); if (method?.value !== 'contains') throw new Error('Unsupported array method'); this.expectPunctuation('('); const arg = this.parseExpression(); this.expectPunctuation(')'); return { type: 'call', name: 'contains', args: [array, arg] }; }
+      return array;
+    }
     if (token.kind === 'string') return { type: 'literal', value: token.value };
     if (token.kind === 'number') return { type: 'literal', value: token.value };
     if (token.kind === 'keyword') {
@@ -243,7 +261,8 @@ class Parser {
         if (segments.length !== 1) throw new Error('unsupported nested formula access');
         return { type: 'formula-ref', name: segments[0] };
       }
-      throw new Error(`unknown identifier "${token.value}"`);
+      if (token.value === 'file') { const segments = this.consumePostfixes(); if (segments.length !== 1) throw new Error('Unsupported file property'); return { type: 'file-prop', name: segments[0] }; }
+      return { type: 'row-prop', name: token.value };
     }
     throw new Error(`unexpected token "${JSON.stringify(token)}"`);
   }
@@ -332,17 +351,19 @@ interface EvalState {
   hasRealRows: boolean;
   /** > 0 while evaluating display positions, where issues are suppressed. */
   displayDepth: number;
+  compiled: Map<string, Expr | null>;
+  targetProperties: Map<string, string>;
 }
 
 function reportIssue(state: EvalState, reason: string, formula: string): void {
   if (state.displayDepth > 0) return;
   const rowPath = state.hasRealRows ? state.row.path : undefined;
-  const key = JSON.stringify([reason, formula, rowPath]);
+  const key = JSON.stringify([reason, formula]);
   if (!state.issueMap.has(key)) {
     const issue: BaseFormulaIssue = { reason, formula };
     if (rowPath !== undefined) issue.rowPath = rowPath;
-    state.issueMap.set(key, issue);
-  }
+    issue.count = 1; state.issueMap.set(key, issue);
+  } else { const issue = state.issueMap.get(key)!; issue.count = (issue.count ?? 1) + 1; }
 }
 
 function evaluateFormulaByName(name: string, state: EvalState, rootName: string): Possibilities {
@@ -355,13 +376,12 @@ function evaluateFormulaByName(name: string, state: EvalState, rootName: string)
   if (!hasOwn(state.formulas, name) || typeof state.formulas[name] !== 'string') {
     return unknownPossibilities();
   }
-  let expr: Expr;
-  try {
-    expr = parseFormula(state.formulas[name]);
-  } catch {
-    reportIssue(state, 'malformed syntax', name);
-    return unknownPossibilities();
+  if (!state.compiled.has(name)) {
+    try { state.compiled.set(name, parseFormula(state.formulas[name])); }
+    catch { state.compiled.set(name, null); }
   }
+  const expr = state.compiled.get(name);
+  if (!expr) { reportIssue(state, 'malformed syntax', name); return unknownPossibilities(); }
   state.memo.set(name, 'pending');
   const value = evaluateExpr(expr, state, rootName);
   state.memo.set(name, value);
@@ -370,6 +390,23 @@ function evaluateFormulaByName(name: string, state: EvalState, rootName: string)
 
 function evaluateExpr(expr: Expr, state: EvalState, rootName: string): Possibilities {
   switch (expr.type) {
+    case 'file-prop': {
+      const path = state.row.path, name = path.split('/').pop() ?? '';
+      return expr.name === 'path' ? completeScalar(path) : expr.name === 'name' ? completeScalar(name) : expr.name === 'ext' ? completeScalar(name.split('.').pop() ?? '') : unknownPossibilities();
+    }
+    case 'array': return expr.items.reduce((value, item) => unionPossibilities(value, evaluateExpr(item, state, rootName)), { scalars: new Map(), targets: new Set(), complete: true } as Possibilities);
+    case 'not': { const value = evaluateExpr(expr.value, state, rootName); return value.complete && value.scalars.size === 1 ? completeScalar(!truthy(value.scalars.values().next().value as Scalar)) : unknownPossibilities(value.targets); }
+    case 'binary': {
+      const left = evaluateExpr(expr.left, state, rootName), right = evaluateExpr(expr.right, state, rootName);
+      if (!left.complete || !right.complete || left.scalars.size !== 1 || right.scalars.size !== 1) return unknownPossibilities(unionPossibilities(left, right).targets);
+      const a = left.scalars.values().next().value as Scalar, b = right.scalars.values().next().value as Scalar;
+      if (expr.op === '==') return completeScalar(a === b);
+      if (expr.op === '!=') return completeScalar(a !== b);
+      if (expr.op === '&&') return completeScalar(truthy(a) && truthy(b));
+      if (expr.op === '||') return completeScalar(truthy(a) || truthy(b));
+      if (a === null || b === null || typeof a !== typeof b) return unknownPossibilities();
+      return completeScalar(expr.op === '>' ? a > b : expr.op === '<' ? a < b : expr.op === '>=' ? a >= b : a <= b);
+    }
     case 'literal':
       return completeScalar(expr.value);
     case 'row-prop':
@@ -414,6 +451,11 @@ function evaluateConcat(expr: Extract<Expr, { type: 'concat' }>, state: EvalStat
 
 function evaluateCall(expr: Extract<Expr, { type: 'call' }>, state: EvalState, rootName: string): Possibilities {
   switch (expr.name) {
+    case 'contains': {
+      if (expr.args.length !== 2) return unknownPossibilities();
+      const list = evaluateExpr(expr.args[0], state, rootName), value = evaluateExpr(expr.args[1], state, rootName);
+      return list.complete && value.complete && value.scalars.size === 1 ? completeScalar(list.scalars.has(scalarKey(value.scalars.values().next().value as Scalar))) : unknownPossibilities();
+    }
     case 'if':
       return evaluateIf(expr, state, rootName);
     case 'link':
@@ -494,7 +536,8 @@ function evaluateTargetConstructor(
     for (const value of target.scalars.values()) {
       if (typeof value === 'string' && value !== '') {
         targets.add(value);
-      } else {
+        if (expr.args[0].type === 'row-prop') state.targetProperties.set(value, expr.args[0].name);
+      } else if (value !== null && value !== '') {
         reportIssue(state, `${name} target is not a usable string`, rootName);
       }
     }
@@ -528,6 +571,7 @@ export function analyzeBaseExpressions(
   const links: BaseFormulaLink[] = [];
   const seenLinks = new Set<string>();
 
+  const compiled = new Map<string, Expr | null>();
   const hasRealRows = rows.length > 0;
   const effectiveRows: readonly BaseFormulaRow[] = hasRealRows
     ? rows
@@ -542,7 +586,7 @@ export function analyzeBaseExpressions(
         issueMap,
         dependencies,
         hasRealRows,
-        displayDepth: 0,
+        displayDepth: 0, compiled, targetProperties: new Map(),
       };
       const result = evaluateFormulaByName(name, state, name);
       for (const target of result.targets) {
@@ -551,7 +595,9 @@ export function analyzeBaseExpressions(
         if (seenLinks.has(key)) continue;
         seenLinks.add(key);
         const link: BaseFormulaLink = { target, formula: name };
-        if (rowPath !== undefined) link.rowPath = rowPath;
+        const ast = compiled.get(name);
+        if (ast?.type === 'call' && ast.name === 'link' && ast.args[0]?.type === 'file-prop' && ast.args[0].name === 'path') link.rowNavigation = true;
+        if (rowPath !== undefined) { link.rowPath = rowPath; link.property = state.targetProperties.get(target); }
         links.push(link);
       }
       if (!result.complete) {
@@ -565,4 +611,26 @@ export function analyzeBaseExpressions(
     issues: [...issueMap.values()],
     dependencies: [...dependencies].sort(),
   };
+}
+
+/** Unknown filters return undefined, so callers keep a conservative row superset. */
+export function baseFilterMatches(filter: unknown, row: BaseFormulaRow): boolean | undefined {
+  if (filter === undefined) return true;
+  if (typeof filter === 'object' && filter && !Array.isArray(filter)) {
+    const value = filter as Record<string, unknown>;
+    for (const op of ['and', 'or', 'not']) if (Array.isArray(value[op])) {
+      const outcomes = value[op].map(item => baseFilterMatches(item, row));
+      if (op === 'and') return outcomes.includes(false) ? false : outcomes.includes(undefined) ? undefined : true;
+      if (op === 'or') return outcomes.includes(true) ? true : outcomes.includes(undefined) ? undefined : false;
+      return outcomes.includes(true) ? false : outcomes.includes(undefined) ? undefined : true;
+    }
+    return undefined;
+  }
+  if (typeof filter !== 'string') return undefined;
+  const folder = /^file\.inFolder\(("(?:[^"\\]|\\.)*")\)$/.exec(filter.trim());
+  if (folder) { const path = JSON.parse(folder[1]) as string; return row.path === path || row.path.startsWith(path + '/'); }
+  try {
+    const result = evaluateExpr(parseFormula(filter), { formulas: {}, row, memo: new Map(), issueMap: new Map(), dependencies: new Set(), hasRealRows: true, displayDepth: 0, compiled: new Map(), targetProperties: new Map() }, 'filter');
+    return result.complete && result.scalars.size === 1 ? truthy(result.scalars.values().next().value as Scalar) : undefined;
+  } catch { return undefined; }
 }

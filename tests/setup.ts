@@ -1,3 +1,16 @@
+import { vi, afterAll } from 'vitest';
+// Exercise real recovery I/O while keeping synthetic journals out of the user's backup directory.
+vi.mock('../src/deletion-recovery', async importOriginal => {
+    const actual = await importOriginal<typeof import('../src/deletion-recovery')>();
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'alp-vitest-recovery-'));
+    afterAll(() => fs.rm(root, { recursive: true, force: true }));
+    return { ...actual, DeletionRecovery: class extends actual.DeletionRecovery {
+        constructor(location?: string) { super(location ?? root); }
+    } };
+});
 if (typeof window === 'undefined')
     Object.defineProperty(globalThis, 'window', { value: globalThis, writable: true });
 if (typeof HTMLElement !== 'undefined') {

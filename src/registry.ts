@@ -1,5 +1,6 @@
+import { yamlMetadata } from './yaml-source';
 import { managedIssues } from './managed-properties';
-import { App, TFile, normalizePath, parseYaml } from 'obsidian';
+import { App, TFile, normalizePath } from 'obsidian';
 import { AttachmentsLibrarySettings, UsageState } from './types';
 import { isEligiblePath } from './file-policy';
 export const PREVIEW_START = '<!-- alp:preview:start -->';
@@ -21,7 +22,7 @@ export function readDocument(content: string): {
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
     if (!match)
         return { metadata: {}, body: content };
-    const parsed: unknown = parseYaml(match[1]);
+    const parsed: unknown = yamlMetadata(match[1]);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
         throw new Error('Invalid frontmatter');
     return { metadata: parsed as Record<string, unknown>, body: content.slice(match[0].length) };
@@ -71,13 +72,12 @@ export class AttachmentRegistry {
             this.dirty.delete(index.path);
             if (entry.failed) this.mappingComplete = false;
             const metadata = entry.metadata;
-            const inferredPath = typeof metadata._filePath === 'string' && metadata._filePath ? metadata._filePath : metadata.al_schema === 2 ? linkPath(metadata.attachment) : null;
-            if (!inferredPath) { if (metadata.al_schema === 2) this.mappingComplete = false; continue; }
-            if (!index.path.startsWith(this.settings.libraryFolder + '/') && metadata.al_schema !== 1 && metadata.al_schema !== 2 && !this.settings.legacyIndexPaths?.includes(index.path) && !this.knownIndexes.has(index))
-                continue;
+            const inferredPath = typeof metadata._filePath === 'string' && metadata._filePath ? metadata._filePath : metadata.al_schema !== undefined ? linkPath(metadata.attachment) : null;
+            if (!inferredPath) { if (metadata.al_schema !== undefined) this.mappingComplete = false; continue; }
+            const unadopted = !index.path.startsWith(this.settings.libraryFolder + '/') && metadata.al_schema === undefined && !this.settings.legacyIndexPaths?.includes(index.path) && !this.knownIndexes.has(index);
             const assetPath = normalizePath(inferredPath);
             const raw = linkPath(metadata.attachment);
-            if (!raw && metadata.al_schema !== 2) continue;
+            if (!raw && metadata.al_schema === undefined) continue;
             // A full attachment path remains authoritative when Obsidian falls
             // back to a same-named Markdown index after the binary is removed.
             const resolved = !raw || raw === assetPath ? assetPath : this.app.metadataCache.getFirstLinkpathDest(raw, index.path)?.path ?? raw;
@@ -100,11 +100,13 @@ export class AttachmentRegistry {
             record.indexPath ??= index.path;
             record.index ??= index;
             record.metadata = metadata;
+            if (!raw) { record.conflict = true; record.reason = 'Invalid attachment link'; }
+            if (unadopted) { record.conflict = true; record.reason = 'Legacy index needs explicit adoption: ' + index.path; }
             const issues = managedIssues(metadata);
             if (entry.failed || issues.length) { record.conflict = true; record.reason = entry.failed ? 'Index cannot be read safely' : issues.join('; '); }
             records.set(assetPath, record);
             byIndex.set(index.path, record);
-            this.knownIndexes.add(index);
+            if (!unadopted) this.knownIndexes.add(index);
         }
         for (const record of records.values()) {
             if ((folded.get(record.assetPath.toLocaleLowerCase())?.length ?? 0) > 1 ||

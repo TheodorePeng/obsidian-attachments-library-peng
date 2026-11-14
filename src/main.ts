@@ -1,3 +1,4 @@
+import { recoveryVault } from './deletion-recovery';
 import { Plugin, TAbstractFile, TFile, Notice, MarkdownRenderChild } from 'obsidian';
 import { AttachmentsLibrarySettings } from './types';
 import { SidecarManager } from './sidecar-manager';
@@ -20,7 +21,7 @@ import { AttachmentUpdates } from './attachment-updates';
 import { PropertyMigration } from './property-migration';
 import { chooseItem } from './choices';
 import { baseName, existingBase, occupiedPaths, validateFolder } from './paths';
-import { galleryViews, openDestination, settingsFromSaved } from './gallery-destination';
+import { galleryViews, openDestination, settingsFromSaved, preferredView } from './gallery-destination';
 export default class AttachmentsLibraryPlugin extends Plugin {
     settings: AttachmentsLibrarySettings;
     registry: AttachmentRegistry;
@@ -55,7 +56,7 @@ export default class AttachmentsLibraryPlugin extends Plugin {
         this.propertyTypes = new ManagedPropertyTypes(this.app, this.registry, this.store);
         this.sidecarManager.ensureTypes = () => this.checkPropertyTypes(true);
         this.references.onRefreshed = async () => {
-            if (this.stopped || this.initializing) return;
+            if (this.stopped || this.initializing || this.deletions?.active) return;
             for (const record of this.registry.records.values()) if (!this.deletions?.ownsPath(record.assetPath) && !this.deletions?.ownsPath(record.indexPath ?? '')) await this.sidecarManager.writeDerived(record, this.references.getUsage(record));
         };
         this.deletions = new DeletionService(this.app, this.registry, this.references);
@@ -79,7 +80,7 @@ export default class AttachmentsLibraryPlugin extends Plugin {
         this.registerEditorExtension(this.images.editorExtension());
         this.register(() => { for (const view of [...this.galleryViews]) view.unload(); this.references.dispose(); this.images.dispose(); if (this.propertyEdits.drafts.size) new Notice('Unsubmitted property drafts were not written.'); this.propertyEdits.dispose(); });
         this.registerVaultEvents();
-        this.registerEvent(this.app.metadataCache.on('changed', (file: TFile, data: string) => { this.registry.invalidate(file.path); this.references.cacheChanged(file.path, data); }));
+        this.registerEvent(this.app.metadataCache.on('changed', (file: TFile, data: string) => { if (this.deletions.ownsPath(file.path)) return; this.registry.invalidate(file.path); this.references.cacheChanged(file.path, data); }));
         this.registerEvent(this.app.metadataCache.on('resolved', () => { this.queue(() => this.refreshUsage()); }));
         this.registerEvent(this.app.workspace.on('file-menu', (menu, file) => {
             if (!(file instanceof TFile)) return;
@@ -89,7 +90,7 @@ export default class AttachmentsLibraryPlugin extends Plugin {
             menu.addItem(item => item.setTitle('Attachments library: delete metadata only…').setIcon('file-minus').onClick(() => { void this.requestDeletion([file.path], 'metadata-only'); }));
             menu.addItem(item => item.setTitle('Attachments library: delete attachment and metadata…').setIcon('trash-2').onClick(() => { void this.requestDeletion([file.path], 'pair'); }));
         }));
-        this.ready = new Promise<void>(resolve => { this.app.workspace.onLayoutReady(() => { if (this.stopped) { resolve(); return; } void this.restoreGalleryViews().then(() => this.refreshUsage(true)).catch(error => this.report(error)).finally(() => { this.initializing = false; resolve(); }); }); });
+        this.ready = new Promise<void>(resolve => { this.app.workspace.onLayoutReady(() => { if (this.stopped) { resolve(); return; } void this.restoreGalleryViews().then(() => this.refreshUsage(true)).catch(error => this.report(error)).finally(() => { this.initializing = false; void this.deletions.recovery.list(recoveryVault(this.app)).then(records => { const interrupted = records.filter(record => !['complete', 'restored', 'not-executed'].includes(record.phase)); if (interrupted.length) this.recentReport = interrupted.length + ' interrupted deletion(s). Open Maintenance & recovery to review.'; }).catch(error => this.report(error)); resolve(); }); }); });
         this.addCommand({ id: 'open-library', name: 'Open attachment gallery', callback: () => { this.queue(() => this.openLibrary()); } });
         this.addCommand({ id: 'create-sidecar-for-active', name: 'Update current attachment…', callback: () => { this.queue(() => this.updateCurrent()); } });
         this.addCommand({ id: 'backfill-all', name: 'Scan attachments…', callback: () => { this.queue(() => this.runBackfill()); } });
@@ -100,14 +101,14 @@ export default class AttachmentsLibraryPlugin extends Plugin {
     private queue(action: () => Promise<void>): void { this.eventQueue = this.eventQueue.then(() => this.stopped ? undefined : action()).catch(error => this.report(error)); }
     private registerVaultEvents(): void {
         this.registerEvent(this.app.vault.on('create', (file: TAbstractFile) => {
-            if (!(file instanceof TFile)) return;
+            if (!(file instanceof TFile) || this.deletions.ownsPath(file.path)) return;
             this.registry.invalidate(file.path); this.references.schedule(file.path); this.references.invalidateResolution();
             const accept = !this.initializing && this.settings.autoCreateOnNew;
             const epoch = this.autoCreateEpoch;
             const allowed = () => accept && epoch === this.autoCreateEpoch && this.settings.autoCreateOnNew && !this.stopped;
             this.queue(async () => { if (allowed() && isEligiblePath(file.path, this.settings)) await this.sidecarManager.createSidecar(file, undefined, undefined, allowed); await this.refreshUsage(); });
         }));
-        this.registerEvent(this.app.vault.on('delete', (file: TAbstractFile) => { this.references.schedule(file.path); this.references.invalidateResolution(); this.queue(() => this.refreshUsage()); }));
+        this.registerEvent(this.app.vault.on('delete', (file: TAbstractFile) => { if (this.deletions.ownsPath(file.path)) return; this.references.schedule(file.path); this.references.invalidateResolution(); this.queue(() => this.refreshUsage()); }));
         this.registerEvent(this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
             this.references.schedule(oldPath); this.references.schedule(file.path); this.registry.invalidate(file.path);
             this.queue(async () => {
@@ -124,10 +125,10 @@ export default class AttachmentsLibraryPlugin extends Plugin {
                 await this.refreshUsage();
             });
         }));
-        this.registerEvent(this.app.vault.on('modify', (file: TAbstractFile) => { if (!(file instanceof TFile)) return; this.registry.invalidate(file.path); this.references.markDirty(file.path); this.queue(() => this.refreshUsage()); }));
+        this.registerEvent(this.app.vault.on('modify', (file: TAbstractFile) => { if (!(file instanceof TFile) || this.deletions.ownsPath(file.path)) return; this.registry.invalidate(file.path); this.references.markDirty(file.path); this.queue(() => this.refreshUsage()); }));
     }
     async refreshUsage(full = false): Promise<void> {
-        if (this.stopped) return;
+        if (this.stopped || this.deletions?.active) return;
         await this.registry.refresh(full);
         if (this.stopped) return;
         this.images.refresh();
@@ -163,7 +164,7 @@ export default class AttachmentsLibraryPlugin extends Plugin {
     async openLibrary(): Promise<void> { await openDestination(this.app, this.settings); }
     private async commitPathSettings(patch: Partial<AttachmentsLibrarySettings>): Promise<void> {
         const previous = { ...this.settings };
-        const legacy = [...this.registry.byIndex.values()].filter(record => record.indexPath && record.metadata.al_schema === undefined).map(record => record.indexPath!);
+        const legacy = [...this.registry.byIndex.values()].filter(record => record.indexPath && !record.conflict && record.metadata.al_schema === undefined).map(record => record.indexPath!);
         const next = { ...this.settings, ...patch, legacyIndexPaths: [...new Set([...(this.settings.legacyIndexPaths ?? []), ...legacy])] };
         Object.assign(this.settings, next);
         try { await this.saveData(next); }
@@ -173,7 +174,8 @@ export default class AttachmentsLibraryPlugin extends Plugin {
             throw error;
         }
         this.settingsTab?.pathsChanged();
-        await this.refreshUsage();
+        await this.registry.refresh(true); await this.references.refresh(undefined, false);
+        for (const view of this.galleryViews) if (view.data) view.onDataUpdated();
     }
     async setIndexFolder(value: string): Promise<void> {
         const folder = validateFolder(this.app, value, this.settings);
@@ -190,6 +192,7 @@ export default class AttachmentsLibraryPlugin extends Plugin {
         await this.commitPathSettings({ defaultBasePath: '', defaultViewName: '', defaultViewOwner: '' });
     }
     async selectBase(value?: string): Promise<void> {
+        if (this.stopped) throw new Error('Plugin stopped');
         if (this.baseBusy) throw new Error('A Base operation is already running.');
         this.baseBusy = true;
         try {
@@ -198,12 +201,22 @@ export default class AttachmentsLibraryPlugin extends Plugin {
             const file = existingBase(this.app, path);
             const views = galleryViews(await this.app.vault.cachedRead(file));
             if (this.app.vault.getFileByPath(file.path) !== file) throw new Error('Base identity changed; apply again.');
-            const preferred = views.filter(view => view.owner === VIEW_TYPE + ':all');
-            const view = preferred.length === 1 ? preferred[0] : views.length === 1 ? views[0] : undefined;
-            const remembered = this.settings.defaultBasePath === file.path ? views.filter(candidate => this.settings.defaultViewOwner ? candidate.owner === this.settings.defaultViewOwner : candidate.name === this.settings.defaultViewName) : [];
-            const selected = remembered.length === 1 ? remembered[0] : view;
+            const name = preferredView(views, file.path, this.settings), selected = views.find(view => view.name === name);
             await this.commitPathSettings({ defaultBasePath: file.path, defaultViewName: selected?.name ?? '', defaultViewOwner: selected?.owner ?? '' });
             if (!views.length) new Notice('This base has no attachment gallery. Use repair gallery views in maintenance.');
+        } finally { this.baseBusy = false; }
+    }
+    isRunning(): boolean { return !this.stopped; }
+    async connectGallery(path: string, name: string, expected: string, identity: TFile): Promise<void> {
+        if (this.stopped) throw new Error('Plugin stopped');
+        if (this.baseBusy) throw new Error('A Base operation is already running.');
+        this.baseBusy = true;
+        try {
+            const file = existingBase(this.app, path);
+            if (file !== identity || await this.app.vault.read(file) !== expected) throw new Error('Base changed. Recheck before saving.');
+            const views = galleryViews(expected), matches = views.filter(view => view.name === name);
+            if (matches.length !== 1) throw new Error('Choose a unique gallery view.');
+            await this.commitPathSettings({ defaultBasePath: file.path, defaultViewName: name, defaultViewOwner: matches[0].owner });
         } finally { this.baseBusy = false; }
     }
     async selectDefaultView(): Promise<void> {
@@ -219,8 +232,8 @@ export default class AttachmentsLibraryPlugin extends Plugin {
         await this.commitPathSettings({ defaultViewName: name, defaultViewOwner: matches[0].owner });
     }
     async createGallery(value = 'Attachments Library.base'): Promise<void> {
+        if (this.stopped) throw new Error('Plugin stopped');
         if (this.baseBusy) throw new Error('A Base operation is already running.');
-        if (this.settings.defaultBasePath) throw new Error('Clear the selected Base before creating another.');
         this.baseBusy = true;
         let created = '';
         try {

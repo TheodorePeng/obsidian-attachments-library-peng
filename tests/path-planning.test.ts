@@ -18,7 +18,7 @@ it('validates directory node types and prevents scope exclusion without creating
     const f=fixture({'blocked':'user','Attachments/a.png':'x','Mixed/b.png':'x','Notes/a.md':'user','A.base':'views: []'});
     expect(validateFolder(f.app,'New/索引',DEFAULT_SETTINGS)).toBe('New/索引'); expect(f.app.vault.createFolder).not.toHaveBeenCalled();
     expect(()=>validateFolder(f.app,'blocked/sub',DEFAULT_SETTINGS)).toThrow('file');
-    expect(()=>validateFolder(f.app,'Mixed',DEFAULT_SETTINGS)).toThrow('contains attachments');
+    expect(()=>validateFolder(f.app,'Mixed',DEFAULT_SETTINGS)).toThrow('contains managed attachments');
     const folder={...DEFAULT_SETTINGS,indexScope:'folder' as const,attachmentsFolder:'Attachments/Sub'};
     expect(()=>validateFolder(f.app,'Attachments',folder)).toThrow('scope'); expect(validateFolder(f.app,'Notes',folder)).toBe('Notes');
     expect(existingBase(f.app,' A.base ').path).toBe('A.base'); expect(()=>existingBase(f.app,'Notes/a.md')).toThrow('existing'); expect(()=>existingBase(f.app,'missing.base')).toThrow('existing');

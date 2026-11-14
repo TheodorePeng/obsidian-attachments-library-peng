@@ -77,8 +77,8 @@ test('property changes across rows change the collected targets', () => {
     after.links.map((l) => [l.target, l.rowPath]),
     [['New.md', 'a.md']],
   );
-  // Missing property is null: a bare link() over it is an unusable target.
-  assert.ok(after.issues.some((issue) => /not a usable string/i.test(issue.reason)));
+  // Null/empty properties cannot point to a file and do not create uncertainty.
+  assert.deepEqual(after.issues, []);
   assert.deepEqual(after.dependencies, ['URL']);
 });
 
@@ -212,7 +212,7 @@ test('links and dependencies are deduplicated', () => {
 });
 
 test('rejects malformed or unsupported syntax instead of inventing a safe target', () => {
-  const invalid = ['', 'link("a") "b"', 'link("a"', 'link("unterminated)', 'link("x\\', 'link("\\q")', 'link("\\u12")', 'link(note.)', 'link(note[2])', 'link(note["x")', 'link(note.a.b)', 'link(formula.a.b)', 'link(note)', 'link(formula)', 'link(thing)', 'link(,)', 'link(@)', 'link("x",)', 'link(' + '9'.repeat(400) + ')'];
+  const invalid = ['', 'link("a") "b"', 'link("a"', 'link("unterminated)', 'link("x\\', 'link("\\q")', 'link("\\u12")', 'link(note.)', 'link(note[2])', 'link(note["x")', 'link(note.a.b)', 'link(formula.a.b)', 'link(note)', 'link(formula)', 'link(,)', 'link(@)', 'link("x",)', 'link(' + '9'.repeat(400) + ')'];
   for (const source of invalid) {
     const result = analyzeBaseExpressions({ main: source }, []);
     assert.equal(result.links.length, 0, source);
@@ -225,7 +225,7 @@ test('preserves literal escapes, Unicode, whitespace, dotted keys and numeric st
   assert.deepEqual(analyzeBaseExpressions({ main: "link('a\\\'b.png')" }, []).links.map(l => l.target), ["a'b.png"]);
 });
 test('fails closed for wrong argument counts and non-string targets', () => {
-  for (const source of ['if()', 'if(true)', 'if(true,1,2,3)', 'link()', 'file("a","b","c")', 'icon()', 'icon("a","b")', 'link(42)', 'link(null)', 'link(false)', 'link("")', 'link(icon("play"))', 'link(this.file)', 'link(note[""])', 'link(true + "x")', 'link(1 + 2)', 'link(if(this, "x", "y") + ".png")']) {
+  for (const source of ['if()', 'if(true)', 'if(true,1,2,3)', 'link()', 'file("a","b","c")', 'icon()', 'icon("a","b")', 'link(42)', 'link(false)', 'link(icon("play"))', 'link(this.file)', 'link(note[""])', 'link(true + "x")', 'link(1 + 2)', 'link(if(this, "x", "y") + ".png")']) {
     const result = analyzeBaseExpressions({ main: source }, []); assert.ok(result.issues.length > 0, source);
   }
   assert.deepEqual(analyzeBaseExpressions({ main: 'if(false, link("a"))' }, []).links, []);
@@ -236,7 +236,7 @@ test('fails closed for wrong argument counts and non-string targets', () => {
 test('handles row scalar types without traversing objects, functions or nonfinite numbers', () => {
   for (const value of [undefined, null, false, true, 0, 1, Infinity, {}, [], () => 'bad']) {
     const result = analyzeBaseExpressions({ main: 'link(note.URL)' }, [{ path: 'a.md', properties: { URL: value } }]);
-    assert.equal(result.links.length, 0); assert.ok(result.issues.length > 0);
+    assert.equal(result.links.length, 0); if (value == null) assert.equal(result.issues.length, 0); else assert.ok(result.issues.length > 0);
   }
   assert.equal(analyzeBaseExpressions({ main: 'link(note.URL)' }, [{ path: 'a', properties: { URL: 'target' } }, { path: 'a', properties: { URL: 'target' } }]).links.length, 1);
 });
