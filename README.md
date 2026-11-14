@@ -1,6 +1,6 @@
 # Attachments Library Peng
 
-基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.6.1**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。1.6.0 的隔离运行验收使用 macOS 上的 Obsidian 1.13.7；1.6.1 已发布为 GitHub Release，可通过 BRAT 安装或更新。
+基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.6.2**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。1.6.0 的隔离运行验收使用 macOS 上的 Obsidian 1.13.7；1.6.1 与 1.6.2 已发布为 GitHub Release，可通过 BRAT 安装或更新（两者插件运行时相同，1.6.2 只更新发布工具链）。
 
 附件保存在原位置，配套的普通 Markdown 索引承载 Properties、OCR 和说明。使用原生 Bases 查询与插件画廊管理这些索引。
 
@@ -122,6 +122,7 @@ node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/ba
 git diff --check
 ```
 
+- [1.6.2 发布流水线验收](docs/acceptance-1.6.2-2026-11-14.md)
 - [1.6.1 英文界面、附件目录范围与 Keep 解锁验收](docs/acceptance-1.6.1-2026-11-14.md)
 - [1.6.0 设置、接管与可恢复删除验收](docs/acceptance-1.6.0-2026-11-14.md)
 - [1.5.0 设置与索引创建验收记录](docs/settings-indexing-acceptance-2026-11-14.md)
@@ -129,4 +130,4 @@ git diff --check
 - [1.4.0 验收、截图与恢复记录](docs/implementation-acceptance-1.4.0-2026-10-26.md)
 - [1.3.0 及以前的 README 历史](docs/README-through-1.3.0.md)
 
-保留原项目作者信息与 [MIT 许可](LICENSE)。1.6.1 已提交、推送并发布为 GitHub Release，BRAT 用户可直接安装或更新。
+保留原项目作者信息与 [MIT 许可](LICENSE)。1.6.2 已提交、推送并发布为 GitHub Release，BRAT 用户可直接安装或更新。
