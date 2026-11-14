@@ -12,6 +12,11 @@ set -euo pipefail
 # the Release is created here. If a workflow ever does create the Release
 # first, this script detects it and replaces the assets with the local build
 # instead of failing.
+#
+# The steps are ordered so that nothing tracked is modified until every check
+# has passed: validation, then notes, then verification, and only then the
+# version bump, commit, tag, push and publish. A failing build therefore
+# leaves the working tree untouched.
 
 usage() {
     cat <<'EOF'
@@ -27,7 +32,8 @@ Options:
                        written, committed, pushed, tagged, or published.
   -h, --help           Show this help.
 
-Steps: bump versions -> lint / test / build -> commit -> tag -> push -> Release.
+Steps: validate -> notes -> lint / test / build -> bump -> commit -> tag ->
+push -> GitHub Release.
 EOF
 }
 
@@ -50,7 +56,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-# ── Validate ────────────────────────────────────────────────────────────────
+# ── Phase 1: validate (reads only, changes nothing) ─────────────────────────
 
 if [ -z "$VERSION" ]; then
     echo "Error: version is required" >&2
@@ -73,8 +79,18 @@ if git tag --list | grep -qx "$VERSION"; then
     exit 1
 fi
 
+if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: GitHub CLI (gh) is not installed" >&2
+    exit 1
+fi
+
 if ! gh auth status >/dev/null 2>&1; then
     echo "Error: GitHub CLI is not authenticated — run 'gh auth login' first" >&2
+    exit 1
+fi
+
+if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then
+    echo "Error: notes file not found: $NOTES_FILE" >&2
     exit 1
 fi
 
@@ -106,54 +122,7 @@ run() {
     fi
 }
 
-# ── Bump versions ───────────────────────────────────────────────────────────
-
-echo "==> Updating version to $VERSION"
-
-if [ "$DRY_RUN" -eq 1 ]; then
-    echo "    + node: set manifest.json version = $VERSION, versions.json[\"$VERSION\"] = minAppVersion"
-    echo "    + npm version $VERSION --no-git-tag-version"
-else
-    node -e "
-const fs = require('fs');
-const version = '$VERSION';
-const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-if (typeof manifest.minAppVersion !== 'string' || !manifest.minAppVersion) {
-    throw new Error('manifest.json is missing a minAppVersion string');
-}
-manifest.version = version;
-fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
-if (fs.existsSync('versions.json')) {
-    const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
-    versions[version] = manifest.minAppVersion;
-    fs.writeFileSync('versions.json', JSON.stringify(versions, null, 2) + '\n');
-}
-"
-    npm version "$VERSION" --no-git-tag-version --silent
-fi
-
-# ── Build & test ─────────────────────────────────────────────────────────────
-
-echo "==> Running pipeline (lint + tests + build)"
-run npm run pipeline
-
-echo "==> Running acceptance scripts"
-run node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/base-formulas.acceptance.mjs tests/gallery-config.acceptance.mjs tests/target-selection.acceptance.mjs
-
-# ── Commit, tag, push ───────────────────────────────────────────────────────
-
-echo "==> Committing release metadata"
-run git add -- manifest.json package.json package-lock.json versions.json
-run git commit -m "chore: release $VERSION"
-
-echo "==> Creating tag $VERSION"
-run git tag "$VERSION"
-
-echo "==> Pushing commit and tag"
-run git push origin "$BRANCH"
-run git push origin "$VERSION"
-
-# ── Release notes ───────────────────────────────────────────────────────────
+# ── Phase 2: release notes (written to a temp file, never to the tree) ──────
 
 GENERATED_NOTES=""
 notes_body() {
@@ -184,10 +153,6 @@ notes_body() {
 }
 
 if [ -n "$NOTES_FILE" ]; then
-    if [ ! -f "$NOTES_FILE" ]; then
-        echo "Error: notes file not found: $NOTES_FILE" >&2
-        exit 1
-    fi
     NOTES_OUT="$NOTES_FILE"
     echo "==> Using release notes from $NOTES_OUT"
 elif [ "$DRY_RUN" -eq 1 ]; then
@@ -210,7 +175,52 @@ else
     echo "==> Generated release notes at $NOTES_OUT"
 fi
 
-# ── GitHub release ───────────────────────────────────────────────────────────
+# ── Phase 3: verify (only touches gitignored build output) ──────────────────
+
+echo "==> Running pipeline (lint + tests + build)"
+run npm run pipeline
+
+echo "==> Running acceptance scripts"
+run node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/base-formulas.acceptance.mjs tests/gallery-config.acceptance.mjs tests/target-selection.acceptance.mjs
+
+# ── Phase 4: bump, commit, tag, push (changes tracked files) ────────────────
+
+echo "==> Updating version to $VERSION"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "    + node: set manifest.json version = $VERSION, versions.json[\"$VERSION\"] = minAppVersion"
+    echo "    + npm version $VERSION --no-git-tag-version"
+else
+    node -e "
+const fs = require('fs');
+const version = '$VERSION';
+const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+if (typeof manifest.minAppVersion !== 'string' || !manifest.minAppVersion) {
+    throw new Error('manifest.json is missing a minAppVersion string');
+}
+manifest.version = version;
+fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+if (fs.existsSync('versions.json')) {
+    const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
+    versions[version] = manifest.minAppVersion;
+    fs.writeFileSync('versions.json', JSON.stringify(versions, null, 2) + '\n');
+}
+"
+    npm version "$VERSION" --no-git-tag-version --silent
+fi
+
+echo "==> Committing release metadata"
+run git add -- manifest.json package.json package-lock.json versions.json
+run git commit -m "chore: release $VERSION"
+
+echo "==> Creating tag $VERSION"
+run git tag "$VERSION"
+
+echo "==> Pushing commit and tag"
+run git push origin "$BRANCH"
+run git push origin "$VERSION"
+
+# ── Phase 5: GitHub release ─────────────────────────────────────────────────
 #
 # The Release is the BRAT distribution source: BRAT downloads main.js,
 # manifest.json and styles.css from it, so all three must be uploaded.
@@ -239,6 +249,28 @@ publish_release() {
 }
 
 publish_release || { echo "Error: could not publish the GitHub Release" >&2; exit 1; }
+
+# Post-condition: BRAT cannot install without all three assets.
+REQUIRED_ASSETS="main.js manifest.json"
+if [ -f styles.css ]; then
+    REQUIRED_ASSETS="$REQUIRED_ASSETS styles.css"
+fi
+
+if [ "$DRY_RUN" -eq 0 ]; then
+    echo "==> Checking the published assets"
+    PUBLISHED="$(gh release view "$VERSION" --repo "$SLUG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+    MISSING=""
+    for asset in $REQUIRED_ASSETS; do
+        if ! printf '%s\n' "$PUBLISHED" | grep -qx "$asset"; then
+            MISSING="$MISSING $asset"
+        fi
+    done
+    if [ -n "$MISSING" ]; then
+        echo "Error: the published Release is missing assets:$MISSING" >&2
+        exit 1
+    fi
+    echo "    all required assets present: $REQUIRED_ASSETS"
+fi
 
 run gh release view "$VERSION" --repo "$SLUG"
 

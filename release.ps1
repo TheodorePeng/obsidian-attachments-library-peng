@@ -13,6 +13,11 @@
     first, this script detects it and replaces the assets with the local build
     instead of failing.
 
+    The steps are ordered so that nothing tracked is modified until every check
+    has passed: validation, then notes, then verification, and only then the
+    version bump, commit, tag, push and publish. A failing build therefore
+    leaves the working tree untouched.
+
 .PARAMETER Version
     New version in x.y.z semver format (e.g. 1.6.2).
 
@@ -37,7 +42,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# ── Validate ─────────────────────────────────────────────────────────────────
+# ── Phase 1: validate (reads only, changes nothing) ─────────────────────────
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     Write-Error "Version must follow x.y.z semver (e.g. 1.0.3)"
@@ -63,6 +68,11 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 gh auth status *> $null
 if ($LASTEXITCODE -ne 0) {
     Write-Error "GitHub CLI is not authenticated — run 'gh auth login' first."
+    exit 1
+}
+
+if ($NotesFile -and -not (Test-Path $NotesFile)) {
+    Write-Error "Notes file not found: $NotesFile"
     exit 1
 }
 
@@ -99,67 +109,7 @@ function Invoke-Step {
     }
 }
 
-# ── Bump versions ────────────────────────────────────────────────────────────
-#
-# Node edits manifest.json and versions.json so both scripts produce
-# byte-identical JSON. PowerShell's ConvertTo-Json would reorder keys and
-# Set-Content -Encoding UTF8 on Windows PowerShell 5.1 writes a BOM, which
-# breaks manifest.json parsing in Obsidian and BRAT.
-
-Write-Host "==> Updating version to $Version"
-
-if ($DryRun) {
-    Write-Host "    + node: set manifest.json version = $Version, versions.json[`"$Version`"] = minAppVersion"
-    Write-Host "    + npm version $Version --no-git-tag-version"
-}
-else {
-    $bumpScript = @"
-const fs = require('fs');
-const version = '$Version';
-const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
-manifest.version = version;
-fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
-if (fs.existsSync('versions.json')) {
-    const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
-    versions[version] = manifest.minAppVersion;
-    fs.writeFileSync('versions.json', JSON.stringify(versions, null, 2) + '\n');
-}
-"@
-    node -e $bumpScript
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    npm version $Version --no-git-tag-version --silent
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
-
-# ── Build & test ─────────────────────────────────────────────────────────────
-
-Write-Host "==> Running pipeline (lint + tests + build)"
-Invoke-Step 'npm run pipeline'
-if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-Write-Host "==> Running acceptance scripts"
-Invoke-Step 'node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/base-formulas.acceptance.mjs tests/gallery-config.acceptance.mjs tests/target-selection.acceptance.mjs'
-if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-# ── Commit, tag, push ────────────────────────────────────────────────────────
-
-Write-Host "==> Committing release metadata"
-Invoke-Step 'git add -- manifest.json package.json package-lock.json versions.json'
-if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Invoke-Step "git commit -m `"chore: release $Version`""
-if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-Write-Host "==> Creating tag $Version"
-Invoke-Step "git tag $Version"
-if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-Write-Host "==> Pushing commit and tag"
-Invoke-Step "git push origin $branch"
-if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Invoke-Step "git push origin $Version"
-if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-# ── Release notes ────────────────────────────────────────────────────────────
+# ── Phase 2: release notes (written to a temp file, never to the tree) ───────
 
 function Get-NoteBody {
     param([ValidateSet('en', 'zh')][string]$Mode)
@@ -184,10 +134,6 @@ function Get-NoteBody {
 
 $generatedNotes = $null
 if ($NotesFile) {
-    if (-not (Test-Path $NotesFile)) {
-        Write-Error "Notes file not found: $NotesFile"
-        exit 1
-    }
     $notesOut = (Resolve-Path $NotesFile).Path
     Write-Host "==> Using release notes from $notesOut"
 }
@@ -214,7 +160,68 @@ else {
     Write-Host "==> Generated release notes at $notesOut"
 }
 
-# ── GitHub release ───────────────────────────────────────────────────────────
+# ── Phase 3: verify (only touches gitignored build output) ───────────────────
+
+Write-Host "==> Running pipeline (lint + tests + build)"
+Invoke-Step 'npm run pipeline'
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "==> Running acceptance scripts"
+Invoke-Step 'node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/base-formulas.acceptance.mjs tests/gallery-config.acceptance.mjs tests/target-selection.acceptance.mjs'
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# ── Phase 4: bump, commit, tag, push (changes tracked files) ────────────────
+#
+# Node edits manifest.json and versions.json so both scripts produce
+# byte-identical JSON. PowerShell's ConvertTo-Json would reorder keys and
+# Set-Content -Encoding UTF8 on Windows PowerShell 5.1 writes a BOM, which
+# breaks manifest.json parsing in Obsidian and BRAT.
+
+Write-Host "==> Updating version to $Version"
+
+if ($DryRun) {
+    Write-Host "    + node: set manifest.json version = $Version, versions.json[`"$Version`"] = minAppVersion"
+    Write-Host "    + npm version $Version --no-git-tag-version"
+}
+else {
+    $bumpScript = @"
+const fs = require('fs');
+const version = '$Version';
+const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+if (typeof manifest.minAppVersion !== 'string' || !manifest.minAppVersion) {
+    throw new Error('manifest.json is missing a minAppVersion string');
+}
+manifest.version = version;
+fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+if (fs.existsSync('versions.json')) {
+    const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
+    versions[version] = manifest.minAppVersion;
+    fs.writeFileSync('versions.json', JSON.stringify(versions, null, 2) + '\n');
+}
+"@
+    node -e $bumpScript
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    npm version $Version --no-git-tag-version --silent
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+Write-Host "==> Committing release metadata"
+Invoke-Step 'git add -- manifest.json package.json package-lock.json versions.json'
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Invoke-Step "git commit -m `"chore: release $Version`""
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "==> Creating tag $Version"
+Invoke-Step "git tag $Version"
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "==> Pushing commit and tag"
+Invoke-Step "git push origin $branch"
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Invoke-Step "git push origin $Version"
+if (-not $DryRun -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# ── Phase 5: GitHub release ──────────────────────────────────────────────────
 #
 # The Release is the BRAT distribution source: BRAT downloads main.js,
 # manifest.json and styles.css from it, so all three must be uploaded.
@@ -246,6 +253,21 @@ function Publish-Release {
 if ((Publish-Release) -ne 0) {
     Write-Error "Could not publish the GitHub Release."
     exit 1
+}
+
+# Post-condition: BRAT cannot install without all three assets.
+$requiredAssets = @('main.js', 'manifest.json')
+if (Test-Path styles.css) { $requiredAssets += 'styles.css' }
+
+if (-not $DryRun) {
+    Write-Host "==> Checking the published assets"
+    $published = @(gh release view $Version --repo $slug --json assets --jq '.assets[].name')
+    $missing = @($requiredAssets | Where-Object { $published -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        Write-Error "The published Release is missing assets: $($missing -join ', ')"
+        exit 1
+    }
+    Write-Host "    all required assets present: $($requiredAssets -join ', ')"
 }
 
 Invoke-Step "gh release view $Version --repo $slug"
