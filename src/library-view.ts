@@ -1,3 +1,5 @@
+import type AttachmentsLibraryPlugin from './main';
+import { recoveryDialog } from './library-dialogs';
 import { effectiveKeep } from './managed-properties';
 import { App, BasesView, BasesEntry, Menu, Modal, QueryController, setIcon, Notice, RenderContext, BasesPropertyId, NullValue, ListValue } from 'obsidian';
 import { AttachmentRegistry, AttachmentRecord } from './registry';
@@ -72,9 +74,12 @@ export function previewAttachment(app: App, record: AttachmentRecord): void {
 export async function requestDeletion(app: App, services: LibraryServices, paths: string[], mode: DeleteMode): Promise<void> {
     try {
         const plan = await services.deletions.prepare(paths, mode);
-        if (!await confirmDeletion(app, plan, () => services.deletions.prepare(paths, mode))) return;
+        if (!await confirmDeletion(app, plan, () => services.deletions.prepare(paths, mode), (path, assetPath) => services.deletions.turnOffKeep(path, assetPath))) return;
         const result = await services.deletions.execute(plan);
-        await confirmAction(app, 'Deletion ' + result.status, [result.message, ...result.steps.map(s => s.status + ': ' + s.path + ' — ' + s.recovery)], 'Close');
+        const titles = { complete: 'Moved to trash', aborted: 'Nothing was deleted', partial: 'Deletion stopped', 'rolled-back': 'Changes were restored', 'recovery-required': 'Recovery required' };
+        if (result.status === 'recovery-required') {
+            if (await confirmAction(app, titles[result.status], [result.message, 'Review the recovery record before trying again.'], 'Open recovery records')) recoveryDialog(app, services as AttachmentsLibraryPlugin);
+        } else await confirmAction(app, titles[result.status], [result.message], 'Close');
     }
     catch (error) {
         await confirmAction(app, 'Deletion blocked', [error instanceof Error ? error.message : 'Cannot prepare deletion'], 'Close');
@@ -181,22 +186,22 @@ export class AttachmentsLibraryView extends BasesView {
             }
         }
         this.content.querySelector('.alp-gallery-empty')?.remove();
-        if (!rows.length) this.content.createDiv({ text: '没有符合条件的附件索引', cls: 'alp-gallery-empty' });
+        if (!rows.length) this.content.createDiv({ text: 'No matching attachment indexes. Check this Base’s filters or add an index.', cls: 'alp-gallery-empty' });
         this.renderPager(rows.length);
     }
     private open(row: GalleryRow, newTab = false): void { void this.app.workspace.getLeaf(newTab ? 'tab' : false).openFile(row.entry.file); }
     private createCard(row: GalleryRow): GalleryCard {
         const element = this.container.ownerDocument.createElement('article'); element.className = 'alp-gallery-card'; element.tabIndex = 0; element.setAttribute('role', 'listitem');
-        const check = element.createEl('input', { cls: 'alp-gallery-select', attr: { type: 'checkbox', 'aria-label': '选择索引 ' + row.entry.file.path } });
-        const cover = element.createEl('button', { cls: 'alp-gallery-cover', attr: { type: 'button', 'aria-label': '打开索引 ' + row.entry.file.basename } });
+        const check = element.createEl('input', { cls: 'alp-gallery-select', attr: { type: 'checkbox', 'aria-label': 'Select index ' + row.entry.file.path } });
+        const cover = element.createEl('button', { cls: 'alp-gallery-cover', attr: { type: 'button', 'aria-label': 'Open index ' + row.entry.file.basename } });
         const actions = element.createDiv({ cls: 'alp-gallery-card-actions' });
         const properties = element.createDiv({ cls: 'alp-gallery-properties' });
         const card: GalleryCard = { element, cover, properties, check, row, cells: new Map(), coverSource: '' };
         check.addEventListener('click', event => event.stopPropagation());
         check.addEventListener('change', () => { this.selection.toggle(card.row.entry.file.path, check.checked); this.render(); });
-        const preview = this.icon(actions, 'scan-eye', '预览原附件', () => previewAttachment(this.app, card.row.record));
+        const preview = this.icon(actions, 'scan-eye', 'Preview attachment', () => previewAttachment(this.app, card.row.record));
         preview.disabled = !row.record.asset;
-        this.icon(actions, 'ellipsis', '卡片操作', event => this.cardMenu(card.row, event));
+        this.icon(actions, 'ellipsis', 'Attachment actions', event => this.cardMenu(card.row, event));
         element.addEventListener('click', event => {
             if ((event.target as Element).closest('a,input,textarea,select,.alp-property-edit,.alp-gallery-card-actions')) return;
             this.open(card.row, event.metaKey || event.ctrlKey);
@@ -216,11 +221,11 @@ export class AttachmentsLibraryView extends BasesView {
     private updateCard(card: GalleryCard, order: BasesPropertyId[]): void {
         const { row } = card;
         card.element.dataset.indexPath = row.entry.file.path;
-        card.element.setAttribute('aria-label', '索引 ' + row.entry.file.basename);
+        card.element.setAttribute('aria-label', 'Index ' + row.entry.file.basename);
         card.element.classList.toggle('is-selected', this.selection.selected.has(row.entry.file.path));
         card.check.checked = this.selection.selected.has(row.entry.file.path);
         card.element.dataset.selected = String(card.check.checked);
-        card.element.querySelector<HTMLButtonElement>('[aria-label="预览原附件"]')!.disabled = !row.record.asset;
+        card.element.querySelector<HTMLButtonElement>('[aria-label="Preview attachment"]')!.disabled = !row.record.asset;
         this.updateCover(card);
         const alive = new Set(order);
         for (const [id, cell] of card.cells) if (!alive.has(id as BasesPropertyId)) { this.disposeCell(cell); card.cells.delete(id); }
@@ -253,16 +258,16 @@ export class AttachmentsLibraryView extends BasesView {
                     const open = (event: MouseEvent) => { if (event.button !== 0 && event.button !== 1) return; event.preventDefault(); event.stopPropagation(); this.open(card.row, event.button === 1 || event.metaKey || event.ctrlKey); };
                     anchor.addEventListener('click', open); anchor.addEventListener('auxclick', open);
                 } else if (boolean && !isGalleryPropertyReadOnly(id)) {
-                    const input = output.createEl('input', { attr: { type: 'checkbox', 'aria-label': label } }); input.checked = key === 'keep' || key === 'al_keep' ? effectiveKeep(card.row.record.metadata) : raw === true || raw === undefined && value?.toString() === 'true';
+                    const input = output.createEl('input', { attr: { type: 'checkbox', 'aria-label': label, title: key === 'keep' || key === 'al_keep' ? 'When on, this attachment and its index cannot be deleted.' : label } }); input.checked = key === 'keep' || key === 'al_keep' ? effectiveKeep(card.row.record.metadata) : raw === true || raw === undefined && value?.toString() === 'true';
                     input.addEventListener('click', event => event.stopPropagation());
-                    input.addEventListener('change', () => { input.disabled = true; void this.edits.toggle(card.row.entry.file.path, id, input.checked).catch(error => { input.checked = !input.checked; new Notice(error instanceof Error ? error.message : '保存失败'); }).finally(() => { input.disabled = false; this.render(); }); });
+                    input.addEventListener('change', () => { input.disabled = true; void this.edits.toggle(card.row.entry.file.path, id, input.checked).catch(error => { input.checked = !input.checked; new Notice(error instanceof Error ? error.message : 'Save failed'); }).finally(() => { input.disabled = false; this.render(); }); });
                 } else {
                     value?.renderTo(output, Object.assign(new RenderContext(), { app: this.app, sourcePath: row.entry.file.path }));
                     if (empty) output.setText('—');
                     output.addEventListener('click', event => { if ((event.target as Element).closest('a')) event.stopPropagation(); });
                 }
                 if (!boolean && !isGalleryPropertyReadOnly(id) && propertyEditKind(raw)) {
-                    const edit = this.icon(cell.element, 'pencil', '编辑 ' + label, () => { void this.openEditor(card.row.entry.file.path, id, cell.element, label); }); edit.addClass('alp-property-edit');
+                    const edit = this.icon(cell.element, 'pencil', 'Edit ' + label, () => { void this.openEditor(card.row.entry.file.path, id, cell.element, label); }); edit.addClass('alp-property-edit');
                     if (!boolean && id !== 'file.name' && key !== 'title') output.addEventListener('click', event => { if ((event.target as Element).closest('a')) return; event.preventDefault(); event.stopPropagation(); void this.openEditor(card.row.entry.file.path, id, cell.element, label); });
                 }
             }
@@ -290,50 +295,50 @@ export class AttachmentsLibraryView extends BasesView {
     }
     private async openEditor(path: string, id: string, anchor?: HTMLElement, label?: string): Promise<void> {
         try { const draft = await this.edits.begin(path, id); if (!this.stopped) this.editor.open(draft, anchor, label); }
-        catch (error) { new Notice(error instanceof Error ? error.message : '无法编辑'); }
+        catch (error) { new Notice(error instanceof Error ? error.message : 'Cannot edit'); }
     }
     private clearCell(element: HTMLElement): void { element.querySelectorAll<HTMLAnchorElement>('.alp-gallery-title').forEach(anchor => this.links.unbind(anchor)); element.empty(); }
     private disposeCell(cell: PropertyCell): void { this.clearCell(cell.element); cell.element.remove(); }
     private disposeCard(card: GalleryCard): void { for (const cell of card.cells.values()) this.disposeCell(cell); card.element.remove(); }
     private cardMenu(row: GalleryRow, event: MouseEvent): void {
         const menu = new Menu();
-        menu.addItem(item => item.setTitle('打开索引').onClick(() => this.open(row)));
-        menu.addItem(item => item.setTitle('新标签打开索引').onClick(() => this.open(row, true)));
-        menu.addItem(item => item.setTitle('预览原附件').onClick(() => previewAttachment(this.app, row.record)));
-        menu.addItem(item => item.setTitle('打开原附件').onClick(() => { if (row.record.asset) void this.app.workspace.getLeaf('tab').openFile(row.record.asset); }));
-        menu.addItem(item => item.setTitle('关联与引用详情（实时）').onClick(() => showReferenceDetails(this.app, { assetPath: row.record.assetPath, indexPaths: row.record.indexPaths ?? [row.entry.file.path], usage: this.services.references.getUsage(row.record), hasUserBody: false, blockedReason: row.record.reason })));
+        menu.addItem(item => item.setTitle('Open index').onClick(() => this.open(row)));
+        menu.addItem(item => item.setTitle('Open index in new tab').onClick(() => this.open(row, true)));
+        menu.addItem(item => item.setTitle('Preview attachment').onClick(() => previewAttachment(this.app, row.record)));
+        menu.addItem(item => item.setTitle('Open attachment').onClick(() => { if (row.record.asset) void this.app.workspace.getLeaf('tab').openFile(row.record.asset); }));
+        menu.addItem(item => item.setTitle('References and details').onClick(() => showReferenceDetails(this.app, { assetPath: row.record.assetPath, indexPaths: row.record.indexPaths ?? [row.entry.file.path], usage: this.services.references.getUsage(row.record), hasUserBody: false, blockedReason: row.record.reason })));
         this.deleteItems(menu, [row.entry.file.path]); menu.showAtMouseEvent(event);
     }
     private deleteItems(menu: Menu, paths: string[]): void {
-        for (const [mode, label] of [['metadata-only', '仅删除索引…'], ['pair', '删除附件及索引…']] as const) menu.addItem(item => item.setTitle(label).onClick(() => { void requestDeletion(this.app, this.services, paths, mode).then(() => { this.selection.selected.clear(); this.render(); }); }));
+        for (const [mode, label] of [['metadata-only', 'Delete index only…'], ['pair', 'Delete attachment and index…']] as const) menu.addItem(item => item.setTitle(label).onClick(() => { void requestDeletion(this.app, this.services, paths, mode).then(() => { this.selection.selected.clear(); this.render(); }); }));
     }
     private renderToolbar(total: number): void {
         this.toolbar.empty();
-        const select = button(this.toolbar, this.selectionMode ? '退出选择' : '选择', () => { this.selectionMode = !this.selectionMode; if (!this.selectionMode) this.selection.selected.clear(); this.render(); });
+        const select = button(this.toolbar, this.selectionMode ? 'Cancel selection' : 'Select', () => { this.selectionMode = !this.selectionMode; if (!this.selectionMode) this.selection.selected.clear(); this.render(); });
         select.setAttribute('aria-pressed', String(this.selectionMode));
         if (this.selectionMode || this.selection.selected.size) {
-            const all = this.toolbar.createEl('input', { attr: { type: 'checkbox', 'aria-label': '选择当前页' } });
+            const all = this.toolbar.createEl('input', { attr: { type: 'checkbox', 'aria-label': 'Select this page' } });
             const visible = this.selection.slice(this.rows()); all.checked = visible.length > 0 && visible.every(row => this.selection.selected.has(row.entry.file.path));
             all.addEventListener('change', () => { for (const row of visible) this.selection.toggle(row.entry.file.path, all.checked); this.render(); });
-            this.toolbar.createSpan({ text: '已选 ' + this.selection.selected.size, cls: 'alp-selection-count' });
-            button(this.toolbar, '清空', () => { this.selection.selected.clear(); this.render(); });
-            if (this.selection.selected.size) button(this.toolbar, '安全删除', () => { const menu = new Menu(); this.deleteItems(menu, [...this.selection.selected]); const rect = this.toolbar.getBoundingClientRect(); menu.showAtPosition({ x: rect.left, y: rect.bottom }); });
+            this.toolbar.createSpan({ text: 'Selected ' + this.selection.selected.size, cls: 'alp-selection-count' });
+            button(this.toolbar, 'Clear', () => { this.selection.selected.clear(); this.render(); });
+            if (this.selection.selected.size) button(this.toolbar, 'Delete selected', () => { const menu = new Menu(); this.deleteItems(menu, [...this.selection.selected]); const rect = this.toolbar.getBoundingClientRect(); menu.showAtPosition({ x: rect.left, y: rect.bottom }); });
         }
         const spacer = this.toolbar.createDiv({ cls: 'alp-gallery-toolbar-spacer' }); spacer.setAttribute('aria-hidden', 'true');
-        this.icon(this.toolbar, 'refresh-cw', '刷新引用', () => { void this.services.refreshUsage().then(() => this.render()); });
-        this.icon(this.toolbar, 'ellipsis', this.edits.drafts.size ? '更多 · 有未提交编辑' : '更多', event => {
+        this.icon(this.toolbar, 'refresh-cw', 'Refresh references', () => { void this.services.refreshUsage().then(() => this.render()); });
+        this.icon(this.toolbar, 'ellipsis', this.edits.drafts.size ? 'More · unsaved edits' : 'More', event => {
             const menu = new Menu();
-            menu.addItem(item => item.setTitle('库信息').onClick(() => { void confirmAction(this.app, '附件库信息', ['本 Base 查询 ' + this.data.groupedData.reduce((count, group) => count + group.entries.length, 0) + ' 条', '当前模式附件索引 ' + total + ' 条', '全库已识别索引 ' + this.services.registry.byIndex.size + ' 条', '只管理已关联的索引；普通文档不会成为附件卡片。'], '关闭'); }));
-            for (const draft of this.edits.drafts.values()) menu.addItem(item => item.setTitle('继续编辑：' + draft.indexPath + ' · ' + draft.key).onClick(() => this.editor.open(draft)));
+            menu.addItem(item => item.setTitle('Library information').onClick(() => { void confirmAction(this.app, 'Attachment library', ['Base results: ' + this.data.groupedData.reduce((count, group) => count + group.entries.length, 0) + '', 'Current view indexes: ' + total + '', 'Recognized indexes: ' + this.services.registry.byIndex.size + '', 'Only linked index notes appear as attachment cards.'], 'Close'); }));
+            for (const draft of this.edits.drafts.values()) menu.addItem(item => item.setTitle('Continue editing: ' + draft.indexPath + ' · ' + draft.key).onClick(() => this.editor.open(draft)));
             menu.showAtMouseEvent(event);
         });
     }
     private renderPager(total: number): void {
         this.pager.empty(); this.pager.hidden = total <= this.selection.size;
         if (this.pager.hidden) return;
-        const previous = button(this.pager, '上一页', () => { this.selection.move(this.selection.page - 1, total); this.render(); this.scroll.scrollTop = 0; }); previous.disabled = this.selection.page === 0;
+        const previous = button(this.pager, 'Previous', () => { this.selection.move(this.selection.page - 1, total); this.render(); this.scroll.scrollTop = 0; }); previous.disabled = this.selection.page === 0;
         this.pager.createSpan({ text: `${this.selection.page + 1} / ${Math.ceil(total / this.selection.size)}` });
-        const next = button(this.pager, '下一页', () => { this.selection.move(this.selection.page + 1, total); this.render(); this.scroll.scrollTop = 0; }); next.disabled = (this.selection.page + 1) * this.selection.size >= total;
+        const next = button(this.pager, 'Next', () => { this.selection.move(this.selection.page + 1, total); this.render(); this.scroll.scrollTop = 0; }); next.disabled = (this.selection.page + 1) * this.selection.size >= total;
     }
     onunload(): void { this.stopped = true; this.services.galleryViews?.delete(this); this.unsubscribe(); this.editor.close(); this.links.dispose(); this.cards.clear(); this.groups.clear(); this.selection.reset(); this.container.empty(); this.container.removeClass('alp-gallery-host'); }
 }

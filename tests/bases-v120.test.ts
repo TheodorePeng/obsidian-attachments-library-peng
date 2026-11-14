@@ -10,7 +10,7 @@ it('keeps user-owned view names and filters; new defaults include moved schema i
 });
 it('configuration preview preserves referenced view names and only changes the proposed copy',()=>{
     const original='filters: file.inFolder("Library")\nviews:\n - type: cms\n   name: CMS\n - type: attachments-library-peng\n   name: All attachments\n   alpOwned: attachments-library-peng:all\n';
-    const p=reviewBaseConfiguration(original,'Library',new Set(['All attachments']));expect(parseYaml(p.content).views[1].name).toBe('All attachments');expect(parseYaml(p.content).views[0].name).toBe('CMS');expect(p.changes.some(x=>x.includes('保留'))).toBe(true);
+    const p=reviewBaseConfiguration(original,'Library',new Set(['All attachments']));expect(parseYaml(p.content).views[1].name).toBe('All attachments');expect(parseYaml(p.content).views[0].name).toBe('CMS');expect(p.changes.some(x=>x.includes('Keep referenced view name'))).toBe(true);
     const renamed=reviewBaseConfiguration(original,'Library',new Set());expect(parseYaml(renamed.content).views[1].name).toBe('附件管理');expect(reviewBaseConfiguration(renamed.content,'Library',new Set()).content).toBe(renamed.content);
     expect(()=>reviewBaseConfiguration('[]','Library',new Set())).toThrow();
 });

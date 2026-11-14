@@ -48,13 +48,13 @@ export function reviewBaseConfiguration(content: string, libraryFolder: string, 
         if (typeof view.alpOwned !== 'string' || typeof view.name !== 'string') continue;
         const mode = view.alpOwned.replace('attachments-library-peng:', '');
         if (!names[mode] || view.name === names[mode]) continue;
-        if (referencedNames.has(view.name)) { changes.push('保留被引用的旧视图名：' + view.name); continue; }
-        changes.push('视图名：' + view.name + ' → ' + names[mode]); view.name = names[mode];
+        if (referencedNames.has(view.name)) { changes.push('Keep referenced view name: ' + view.name); continue; }
+        changes.push('View name: ' + view.name + ' → ' + names[mode]); view.name = names[mode];
     }
     const managed = (parseYaml(upgradeBase('', libraryFolder)) as Record<string, unknown>).filters;
     const marker = 'al_schema == 1';
     if (!JSON.stringify(config.filters ?? null).includes(marker)) {
-        changes.push('扩展全局筛选：保留原条件并加入已识别索引范围。');
+        changes.push('Expand global filters while preserving existing conditions.');
         config.filters = config.filters ? { or: [config.filters, managed] } : managed;
     }
     const output = stringifyYaml(config);
@@ -120,7 +120,7 @@ export class BasesCreator {
         let backup = path + '.alp-gallery-backup'; let suffix = 1;
         while (this.app.vault.getAbstractFileByPath(backup)) backup = path + '.alp-gallery-backup-' + suffix++;
         await this.app.vault.create(backup, original);
-        await this.app.vault.process(file, current => { if (!this.isActive() || current !== original) throw new Error('Base 已变化，请重新打开；原配置已备份'); return updated; });
+        await this.app.vault.process(file, current => { if (!this.isActive() || current !== original) throw new Error('The Base changed. Reopen it; the original configuration was backed up.'); return updated; });
     }
     async moveBaseFile(oldFolder: string, newFolder: string): Promise<void> {
         if (!this.isActive())

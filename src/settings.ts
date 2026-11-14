@@ -3,7 +3,7 @@ import { App, Notice, PluginSettingTab, Setting, Menu } from 'obsidian';
 import type AttachmentsLibraryPlugin from './main';
 import { normalizeExtensions } from './file-policy';
 import { PathSuggest } from './path-suggest';
-import { inputVaultPath } from './paths';
+import { inputVaultPath, validateFolder } from './paths';
 import { GalleryConnection } from './gallery-connection';
 import { restoreLibraryDialog, recoveryDialog } from './library-dialogs';
 import { galleryViews } from './gallery-destination';
@@ -11,7 +11,9 @@ import { MANAGED_TYPES } from './managed-properties';
 export class AttachmentsLibrarySettingsTab extends PluginSettingTab {
     constructor(app: App, private plugin: AttachmentsLibraryPlugin) { super(app, plugin); }
     private folderDraft?: string;
+    private attachmentDraft?: string;
     private folderApplied = '';
+    private attachmentApplied = '';
     private busy = false;
     private showing = false;
     private renderId = 0;
@@ -19,8 +21,10 @@ export class AttachmentsLibrarySettingsTab extends PluginSettingTab {
     private galleryEl?: HTMLElement;
     private folderInput?: HTMLInputElement;
     private folderFeedback?: HTMLElement;
+    private attachmentInput?: HTMLInputElement;
+    private attachmentFeedback?: HTMLElement;
     private disposeSuggestions(): void { this.suggesters.forEach(suggest => suggest.dispose()); this.suggesters = []; }
-    hide(): void { this.showing = false; this.renderId++; this.disposeSuggestions(); this.folderDraft = undefined; }
+    hide(): void { this.showing = false; this.renderId++; this.disposeSuggestions(); this.folderDraft = undefined; this.attachmentDraft = undefined; }
     pathsChanged(): void {
         if (!this.showing) return;
         if (this.galleryEl) this.baseSettings(this.galleryEl);
@@ -29,6 +33,10 @@ export class AttachmentsLibrarySettingsTab extends PluginSettingTab {
         if (this.folderDraft === this.folderApplied) { this.folderDraft = folder; if (this.folderInput) { this.folderInput.value = folder; this.folderInput.dispatchEvent(new Event('input')); } }
         else if (folder !== this.folderApplied) this.folderFeedback?.setText('Saved location moved. Your draft is preserved; cancel changes to use ' + folder + '.');
         this.folderApplied = folder;
+        const attachment = this.plugin.settings.attachmentsFolder;
+        if (this.attachmentInput && this.attachmentDraft === this.attachmentApplied) { this.attachmentInput.value = attachment; this.attachmentInput.dispatchEvent(new Event('input')); }
+        else if (this.attachmentInput && attachment !== this.attachmentApplied) this.attachmentFeedback?.setText('Saved location moved. Your draft is preserved; cancel changes to use ' + attachment + '.');
+        this.attachmentApplied = attachment;
     }
     private baseSettings(el: HTMLElement): void {
         el.empty(); const s = this.plugin.settings, id = ++this.renderId;
@@ -66,7 +74,7 @@ export class AttachmentsLibrarySettingsTab extends PluginSettingTab {
     private folderSettings(el: HTMLElement): void {
         const area = el.createDiv({ cls: 'alp-folder-settings' });
         area.createEl('label', { text: 'New index notes folder', cls: 'alp-field-label', attr: { for: 'alp-index-folder' } });
-        area.createEl('p', { text: 'Where new Markdown index notes are created. Existing indexes stay where they are.', cls: 'alp-helper' });
+        area.createEl('p', { text: 'Where new index notes are created. Existing indexes stay where they are. This folder is excluded when searching for attachments.', cls: 'alp-helper' });
         const input = area.createEl('input', { cls: 'alp-path-input', attr: { id: 'alp-index-folder', type: 'text', 'aria-describedby': 'alp-folder-example alp-folder-feedback' } }); this.folderInput = input;
         input.value = this.folderDraft ?? '';
         const example = area.createEl('p', { cls: 'alp-helper alp-path', attr: { id: 'alp-folder-example' } });
@@ -92,6 +100,29 @@ export class AttachmentsLibrarySettingsTab extends PluginSettingTab {
             finally { this.busy = false; input.disabled = false; save.disabled = cancel.disabled = input.value === this.plugin.settings.libraryFolder; input.focus(); }
         })(); });
         update();
+        try { validateFolder(this.app, this.plugin.settings.libraryFolder, this.plugin.settings); } catch (error) { feedback.setText('Automatic indexing is paused until this location is fixed. ' + (error instanceof Error ? error.message : 'Choose another folder.')); feedback.setAttribute('role', 'alert'); }
+    }
+    private attachmentSettings(el: HTMLElement): void {
+        const area = el.createDiv({ cls: 'alp-folder-settings' });
+        area.createEl('label', { text: 'Attachment folder', cls: 'alp-field-label', attr: { for: 'alp-attachment-folder' } });
+        area.createEl('p', { text: 'Search for original attachments in this folder.', cls: 'alp-helper' });
+        const input = area.createEl('input', { cls: 'alp-path-input', attr: { id: 'alp-attachment-folder', 'aria-describedby': 'alp-attachment-feedback' } }); this.attachmentInput = input;
+        input.value = this.attachmentDraft ?? this.plugin.settings.attachmentsFolder;
+        const feedback = area.createEl('p', { cls: 'alp-field-feedback', attr: { id: 'alp-attachment-feedback', 'aria-live': 'polite' } }); this.attachmentFeedback = feedback;
+        const actions = area.createDiv({ cls: 'alp-card-actions' });
+        const cancel = actions.createEl('button', { text: 'Cancel changes' }), save = actions.createEl('button', { text: 'Save location', cls: 'mod-cta' });
+        let composing = false;
+        const update = () => { this.attachmentDraft = input.value; input.removeAttribute('aria-invalid'); feedback.setText(''); save.disabled = cancel.disabled = input.value === this.plugin.settings.attachmentsFolder || this.busy; };
+        input.addEventListener('input', update); input.addEventListener('compositionstart', () => { composing = true; }); input.addEventListener('compositionend', () => { composing = false; });
+        this.suggesters.push(new PathSuggest(this.app, input, 'folder', value => { input.value = value; update(); }));
+        cancel.addEventListener('click', () => { input.value = this.plugin.settings.attachmentsFolder; update(); input.focus(); });
+        save.addEventListener('click', () => { void (async () => {
+            if (this.busy || composing || save.disabled) return; this.busy = true; input.disabled = save.disabled = cancel.disabled = true; feedback.setText('Saving location…');
+            try { await this.plugin.setIndexScope('folder', input.value); this.attachmentApplied = this.attachmentDraft = input.value = this.plugin.settings.attachmentsFolder; feedback.setText('Saved: ' + input.value); }
+            catch (error) { feedback.setAttribute('role', 'alert'); input.setAttribute('aria-invalid', 'true'); feedback.setText((error instanceof Error ? error.message : 'Save failed') + ' The previous location is still active.'); }
+            finally { this.busy = false; input.disabled = false; save.disabled = cancel.disabled = input.value === this.plugin.settings.attachmentsFolder; input.focus(); }
+        })(); });
+        update();
     }
     private async action(action: () => Promise<void>): Promise<void> { try { await action(); } catch (error) { new Notice(error instanceof Error ? error.message : 'Operation failed'); } finally { if (this.showing) this.render(); } }
     display(): void { this.render(); }
@@ -99,11 +130,19 @@ export class AttachmentsLibrarySettingsTab extends PluginSettingTab {
         this.disposeSuggestions(); this.showing = true; this.renderId++;
         const el = this.containerEl; el.empty(); el.addClass('alp-settings'); const s = this.plugin.settings;
         this.folderApplied = s.libraryFolder; this.folderDraft ??= this.folderApplied;
+        this.attachmentApplied = s.attachmentsFolder; this.attachmentInput = undefined; this.attachmentFeedback = undefined;
         new Setting(el).setName('Gallery').setHeading();
         this.galleryEl = el.createDiv(); this.baseSettings(this.galleryEl);
         new Setting(el).setName('Indexing').setHeading();
-        new Setting(el).setName('Index scope').setDesc('Attachment scope is independent of base filters. Reference safety always covers the whole vault.').addDropdown(d => d.addOptions({ vault: 'Entire Vault', folder: 'Attachment folder' }).setValue(s.indexScope).onChange(async v => { s.indexScope = v === 'folder' ? 'folder' : 'vault'; await this.action(() => this.plugin.saveSettings()); }));
-        if (s.indexScope === 'folder') new Setting(el).setName('Attachment folder').addText(t => t.setValue(s.attachmentsFolder).onChange(async v => { s.attachmentsFolder = v.trim().replace(/^\/+|\/+$/g, '') || 'Attachments'; await this.plugin.saveSettings(); }));
+        const scopeStatus = el.createEl('p', { cls: 'alp-field-feedback', attr: { 'aria-live': 'polite' } });
+        new Setting(el).setName('Index scope').setDesc('Choose where to find attachments. The index folder is excluded from the search.').addDropdown(d => d.addOptions({ vault: 'Entire Vault', folder: 'Attachment folder' }).setValue(s.indexScope).onChange(async value => {
+            const previous = s.indexScope; if (this.busy) { d.setValue(previous); return; }
+            this.busy = true; d.setDisabled(true); scopeStatus.setText('Checking locations…');
+            try { await this.plugin.setIndexScope(value === 'folder' ? 'folder' : 'vault'); this.attachmentDraft = undefined; this.busy = false; this.render(); }
+            catch (error) { d.setValue(previous); scopeStatus.setAttribute('role', 'alert'); scopeStatus.setText((error instanceof Error ? error.message : 'Could not change scope') + ' The previous scope is still active.'); }
+            finally { this.busy = false; d.setDisabled(false); }
+        }));
+        if (s.indexScope === 'folder') this.attachmentSettings(el);
         this.folderSettings(el);
         new Setting(el).setName('Extensions').setDesc('Attachment whitelist. Markdown, bases, canvas, hidden folders and index notes are always excluded.').addText(t => t.setValue(s.watchedExtensions.join(', ')).onChange(async v => { s.watchedExtensions = normalizeExtensions(v.split(',')); await this.plugin.saveSettings(); }));
         new Setting(el).setName('Create indexes for new attachments').setDesc('Only future attachments. Enabling this does not scan existing files or require a full scan.').addToggle(t => t.setValue(s.autoCreateOnNew).onChange(async v => { await this.action(() => this.plugin.setAutoCreate(v)); }));

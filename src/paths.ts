@@ -51,10 +51,18 @@ export function validateFolder(app: App, value: string, settings: AttachmentsLib
     }
     if (!checkScope) return folder;
     const under = (path: string, parent: string) => path === parent || path.startsWith(parent + '/');
-    if (settings.indexScope === 'folder' && under(settings.attachmentsFolder, folder)) throw new Error('Index notes folder must not contain the attachment scope.');
+    if (settings.indexScope === 'folder' && under(settings.attachmentsFolder, folder)) throw new Error('The index folder cannot contain the attachment folder. Choose a separate location.');
     const scope = { ...settings, libraryFolder: '' };
     const examples = app.vault.getFiles().filter(file => under(file.path, folder) && isEligiblePath(file.path, scope)).slice(0, 3);
     if (examples.length) throw new Error('This folder contains managed attachments. Choose an independent index folder. Examples: ' + examples.map(file => file.path).join(', '));
+    return folder;
+}
+export function validateAttachmentFolder(app: App, value: string): string {
+    const folder = inputVaultPath(app, value), parts = folder.split('/');
+    for (let i = 1; i <= parts.length; i++) {
+        const item = app.vault.getAbstractFileByPath(parts.slice(0, i).join('/'));
+        if (item && !(item instanceof TFolder)) throw new Error('Choose a folder for attachments.');
+    }
     return folder;
 }
 export function existingBase(app: App, value: string): TFile {

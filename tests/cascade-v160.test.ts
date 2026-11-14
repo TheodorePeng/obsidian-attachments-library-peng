@@ -36,6 +36,18 @@ it('clears the reported Canvas and two embeds, trashes both targets, and restore
         expect(await f.d.restoreJournal(journal)).toEqual([]); expect(f.data.get('assets/图.png')).toBe('binary'); expect(f.data.get('Library/图.png.md')).toBe(index); expect(f.data.get('Untitled.canvas')).toBe(canvas); expect(f.data.get('preview.md')).toBe(note);
     } finally { await f.clean(); }
 });
+it('requires a separate deletion after unlocking and restores the unlocked index and references',async()=>{
+    const original=index.replace('al_keep: false','al_keep: true');const note='Before ![[assets/图.png]] after';
+    const f=await setup({'Library/图.png.md':original,'Untitled.canvas':canvas,'preview.md':note});
+    try {
+        const blocked=await f.d.prepare(['assets/图.png'],'pair');expect(blocked.reviews[0].blockCode).toBe('keep');
+        await f.d.turnOffKeep('Library/图.png.md','assets/图.png');expect(f.files.has('assets/图.png')).toBe(true);
+        const unlocked=f.data.get('Library/图.png.md')!;expect(unlocked).toContain('al_keep: false');
+        const plan=await f.d.prepare(['assets/图.png'],'pair');expect(plan.skipped).toEqual([]);expect((await f.d.execute(plan)).status).toBe('complete');
+        const [journal]=await f.recovery.list(recoveryVault(f.app));expect(await f.d.restoreJournal(journal)).toEqual([]);
+        expect(f.data.get('assets/图.png')).toBe('binary');expect(f.data.get('Library/图.png.md')).toBe(unlocked);expect(f.data.get('Untitled.canvas')).toBe(canvas);expect(f.data.get('preview.md')).toBe(note);
+    } finally {await f.clean();}
+});
 it('merges multiple selected targets into a single source patch and refuses mixed protected selections',async()=>{
     const f=await setup({'b.png':'b','Library/b.md':index.replaceAll('assets/图.png','b.png'),'n.md':'![[assets/图.png]] ![[b.png]]'});
     try { const p=await f.d.prepare(['assets/图.png','b.png'],'pair'); expect(p.changes).toHaveLength(1); expect(p.changes[0].after).toBe(' '); f.data.set('Library/b.md',index.replaceAll('assets/图.png','b.png').replace('al_keep: false','al_keep: true')); const q=await f.d.prepare(['assets/图.png','b.png'],'pair'); expect(q.skipped.length).toBeGreaterThan(0); expect((await f.d.execute(q)).status).toBe('aborted'); expect(f.writes).toEqual([]); } finally { await f.clean(); }

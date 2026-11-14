@@ -20,14 +20,14 @@ async function setup() {
 }
 it('keeps folder drafts until Save, reports errors inline, preserves focus and creates no directory', async()=>{
     const f=await setup(); for(const name of ['Gallery','Indexing','Existing library','Image interaction','Maintenance & recovery'])expect(f.find(name)).toBeTruthy();
-    expect(f.button('Save location').disabled).toBe(true); f.type('资料/索引'); expect(f.plugin.settings.libraryFolder).toBe('Library');
+    expect(f.button('Save location').disabled).toBe(true); f.type('资料/索引'); expect(f.plugin.settings.libraryFolder).toBe('Attachment Library');
     const input=f.input();input.focus();f.button('Save location').click();await vi.waitFor(()=>expect(f.plugin.settings.libraryFolder).toBe('资料/索引'));expect(f.input()).toBe(input);expect(f.app.vault.createFolder).not.toHaveBeenCalled();expect(f.tab.containerEl.textContent).toContain('Saved: 资料/索引');
     f.type('Custom.base');f.button('Save location').click();await vi.waitFor(()=>expect(f.tab.containerEl.querySelector('[role=alert]')?.textContent).toContain('This is a Base file'));expect(f.input().value).toBe('Custom.base');expect(f.plugin.settings.libraryFolder).toBe('资料/索引');
     f.button('Cancel changes').click();expect(f.input().value).toBe('资料/索引');f.type('');f.button('Save location').click();await vi.waitFor(()=>expect(f.tab.containerEl.querySelector('[role=alert]')).toBeTruthy());
     f.tab.hide();f.draw();expect(f.input().value).toBe('资料/索引');
 });
 it('handles save failure, suggestions, moves, absolute paths and Chinese composition without losing drafts',async()=>{
-    const f=await setup();inputSuggestInstances.at(-1).selectSuggestion('Draft folder',new MouseEvent('click'));expect(f.input().value).toBe('Draft folder');expect(f.plugin.settings.libraryFolder).toBe('Library');
+    const f=await setup();inputSuggestInstances.at(-1).selectSuggestion('Draft folder',new MouseEvent('click'));expect(f.input().value).toBe('Draft folder');expect(f.plugin.settings.libraryFolder).toBe('Attachment Library');
     f.plugin.settings.libraryFolder='Moved';f.tab.pathsChanged();expect(f.input().value).toBe('Draft folder');expect(f.tab.containerEl.textContent).toContain('draft is preserved');
     const persist=vi.spyOn(f.plugin,'saveData').mockRejectedValueOnce(Error('disk denied'));f.button('Save location').click();await vi.waitFor(()=>expect(f.tab.containerEl.textContent).toContain('disk denied'));expect(f.input().value).toBe('Draft folder');expect(f.plugin.settings.libraryFolder).toBe('Moved');persist.mockRestore();
     f.button('Cancel changes').click();f.type('Absolute');f.input().dispatchEvent(new Event('compositionstart'));f.button('Save location').click();expect(f.plugin.settings.libraryFolder).toBe('Moved');f.input().dispatchEvent(new Event('compositionend'));
@@ -48,10 +48,37 @@ it('isolates new-Base mode, prevents duplicate creation, and shows precise broke
     f.files.delete('New gallery.base');f.draw();await vi.waitFor(()=>expect(f.tab.containerEl.textContent).toContain('missing'));
 });
 it('routes maintenance, scope and image controls and reports operation failures',async()=>{
-    const f=await setup();await f.find('Index scope').dropdownCallbacks[0]('folder');expect(f.find('Attachment folder')).toBeTruthy();await f.find('Attachment folder').textCallbacks[0](' /图片/ ');expect(f.plugin.settings.attachmentsFolder).toBe('图片');
+    const f=await setup();await f.find('Index scope').dropdownCallbacks[0]('folder');expect(f.tab.containerEl.querySelector('#alp-attachment-folder')).toBeTruthy(); const field=f.tab.containerEl.querySelector('#alp-attachment-folder') as HTMLInputElement; f.type('图片',field); expect(f.plugin.settings.attachmentsFolder).toBe('Attachments'); const area=field.closest('.alp-folder-settings') as HTMLElement; f.button('Save location',area).click(); await vi.waitFor(()=>expect(f.plugin.settings.attachmentsFolder).toBe('图片'));
     f.find('Extensions').textCallbacks[0]('PNG, .md, .PDF');await Promise.resolve();expect(f.plugin.settings.watchedExtensions).toEqual(['.png','.pdf']);
     await f.find('Create indexes for new attachments').toggleCallbacks[0](false);expect(f.plugin.settings.autoCreateOnNew).toBe(false);await f.find('Auto-hide image button').toggleCallbacks[0](false);await f.find('Command/ctrl-click').dropdownCallbacks[0]('nativeCmdClick');await f.find('Command/ctrl-click').dropdownCallbacks[0]('bad');
     for(const [name,method] of [['Property types','checkPropertyTypes'],['Scan attachments','runBackfill'],['Migrate index properties','migrateProperties'],['Repair gallery views','reviewLibraryConfiguration'],['Rebuild reference index','rebuildReferences']] as const){const spy=vi.spyOn(f.plugin,method).mockResolvedValue(undefined as never);for(const cb of f.find(name).buttonCallbacks)cb();await vi.waitFor(()=>expect(spy).toHaveBeenCalled());}
     await f.plugin.selectBase('Custom.base');f.draw();vi.spyOn(f.plugin,'openLibrary').mockRejectedValueOnce(Error('missing target'));f.button('Open gallery').click();await vi.waitFor(()=>expect(noticeMessages).toContain('missing target'));
     f.plugin.propertyTypes.check=()=>({available:false,conflicts:[],missing:[]});f.draw();f.plugin.propertyTypes.check=()=>({available:true,conflicts:[{key:'keep',expected:'checkbox',assigned:'text',paths:['a.md']}],missing:[]});f.draw();f.plugin.propertyTypes.check=()=>({available:true,conflicts:[],missing:['keep']});f.draw();
+});
+it('validates attachment folder drafts, handles failures, and preserves the applied scope',async()=>{
+    const f=await setup();await f.find('Index scope').dropdownCallbacks[0]('folder');const field=f.tab.containerEl.querySelector('#alp-attachment-folder') as HTMLInputElement;const area=field.closest('.alp-folder-settings') as HTMLElement;
+    f.type('Custom.base',field);f.button('Save location',area).click();await vi.waitFor(()=>expect(area.textContent).toContain('Choose a folder'));expect(field.value).toBe('Custom.base');expect(f.plugin.settings.attachmentsFolder).toBe('Attachments');
+    f.button('Cancel changes',area).click();expect(field.value).toBe('Attachments');
+    f.type('图片',field);field.dispatchEvent(new Event('compositionstart'));f.button('Save location',area).click();expect(f.plugin.settings.attachmentsFolder).toBe('Attachments');field.dispatchEvent(new Event('compositionend'));
+    const save=vi.spyOn(f.plugin,'saveData').mockRejectedValueOnce(Error('permission denied'));f.button('Save location',area).click();await vi.waitFor(()=>expect(area.textContent).toContain('permission denied'));expect(f.plugin.settings.attachmentsFolder).toBe('Attachments');save.mockRestore();
+    inputSuggestInstances.at(-2).selectSuggestion('New folder',new MouseEvent('click'));expect(field.value).toBe('New folder');expect(f.plugin.settings.attachmentsFolder).toBe('Attachments');f.button('Save location',area).click();await vi.waitFor(()=>expect(f.plugin.settings.attachmentsFolder).toBe('New folder'));
+    f.type('unsaved',field);f.tab.hide();f.draw();expect((f.tab.containerEl.querySelector('#alp-attachment-folder') as HTMLInputElement).value).toBe('New folder');
+});
+it('keeps the previous scope if the requested scope conflicts or cannot be saved',async()=>{
+    const f=await setup();f.plugin.settings.libraryFolder='Attachments';await f.find('Index scope').dropdownCallbacks[0]('folder');expect(f.plugin.settings.indexScope).toBe('vault');expect(f.tab.containerEl.textContent).toContain('cannot contain the attachment folder');
+    f.plugin.settings.libraryFolder='Library';vi.spyOn(f.plugin,'saveData').mockRejectedValueOnce(Error('scope denied'));await f.find('Index scope').dropdownCallbacks[0]('folder');expect(f.plugin.settings.indexScope).toBe('vault');expect(f.tab.containerEl.textContent).toContain('scope denied');
+});
+it('informs users about conflicting default folders and restores moved saved paths without losing drafts',async()=>{
+    const f=await setup();f.data.set('Attachment Library/image.png','x');f.add('Attachment Library/image.png');f.folder('Attachment Library');f.draw();expect(f.tab.containerEl.textContent).toContain('Automatic indexing is paused');
+    const input=f.input();f.type('draft');f.plugin.settings.libraryFolder='New saved';f.tab.pathsChanged();expect(input.value).toBe('draft');expect(f.tab.containerEl.textContent).toContain('draft is preserved');f.button('Cancel changes').click();expect(input.value).toBe('New saved');f.plugin.settings.libraryFolder='Moved again';f.tab.pathsChanged();expect(input.value).toBe('Moved again');
+});
+it('keeps scope unchanged when a prior operation is busy, and reports an invalid current index location',async()=>{
+    const f=await setup();(f.tab as any).busy=true;await f.find('Index scope').dropdownCallbacks[0]('folder');expect(f.plugin.settings.indexScope).toBe('vault');(f.tab as any).busy=false;
+    f.plugin.settings.libraryFolder='Custom.base';f.draw();expect(f.tab.containerEl.textContent).toContain('Automatic indexing is paused');expect(f.tab.containerEl.textContent).toContain('This is a Base file');
+});
+it('tracks a moved attachment folder while preserving an unsaved path draft',async()=>{
+    const f=await setup();await f.find('Index scope').dropdownCallbacks[0]('folder');const field=f.tab.containerEl.querySelector<HTMLInputElement>('#alp-attachment-folder')!;const area=field.closest('.alp-folder-settings') as HTMLElement;
+    f.plugin.settings.attachmentsFolder='Moved';f.tab.pathsChanged();expect(field.value).toBe('Moved');
+    f.type('Draft',field);f.plugin.settings.attachmentsFolder='Moved again';f.tab.pathsChanged();expect(field.value).toBe('Draft');expect(area.textContent).toContain('draft is preserved');
+    f.button('Cancel changes',area).click();expect(field.value).toBe('Moved again');
 });

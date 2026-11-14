@@ -17,6 +17,7 @@ export async function settingsFromSaved(app: App, saved: Partial<AttachmentsLibr
     const report = saved?.lastOperationReport;
     settings.lastOperationReport = report && typeof report.summary === 'string' && typeof report.recovery === 'string' ? report : undefined;
     const fresh = !saved || Object.keys(saved).length === 0;
+    settings.libraryFolder = fresh ? 'Attachment Library' : typeof saved.libraryFolder === 'string' ? saved.libraryFolder : 'Library';
     settings.autoCreateOnNew = fresh ? true : saved.autoCreateOnNew === true;
     if (!fresh && saved?.settingsVersion !== 2) {
         settings.autoCreateOnNew = !!saved?.autoCreateOnNew && !!saved?.initialScanComplete;

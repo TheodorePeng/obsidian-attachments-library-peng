@@ -148,7 +148,7 @@ export class ImageNavigation {
                     frame = doc.createElement('span'); frame.className = 'alp-image-frame';
                     host.replaceWith(frame); frame.appendChild(host);
                 }
-                const anchor = (layer ?? frame!).createEl('a', { cls: 'alp-image-link', attr: { 'aria-label': '查看附件索引', 'title': '查看索引；command 点击打开出处' } });
+                const anchor = (layer ?? frame!).createEl('a', { cls: 'alp-image-link', attr: { 'aria-label': 'Open attachment index', 'title': 'Open index; Command-click opens source' } });
                 anchor.createSpan({ text: '↗', cls: 'alp-image-glyph' });
                 control = { host, anchor, frame, layer, root, sourcePath, assetPath: asset.path, hoverParent: { hoverPopover: null }, hovered: false, session: '', cleanup: [] };
                 this.controls.set(host, control);
@@ -183,7 +183,7 @@ export class ImageNavigation {
             control.anchor.dataset.href = record?.indexPath ?? '';
             control.anchor.dataset.alpAsset = asset.path; control.anchor.dataset.alpSource = sourcePath;
             control.anchor.classList.toggle('alp-image-always', !this.settings.imageButtonAutoHide);
-            control.anchor.setAttribute('aria-label', record?.indexPath ? '查看附件索引 ' + record.indexPath : '为附件建立索引 ' + asset.path);
+            control.anchor.setAttribute('aria-label', record?.indexPath ? 'Open attachment index ' + record.indexPath : 'Create index for attachment ' + asset.path);
         }
         for (const control of [...this.controls.values()]) if (control.root === root && !root.contains(control.host)) this.remove(control);
         this.measure(root, view);
@@ -224,21 +224,21 @@ export class ImageNavigation {
     }
     async openIndex(path: string, newTab = false): Promise<void> {
         let record = this.registry.records.get(path);
-        if (record?.conflict) { new Notice('附件关联冲突，请在附件管理中检查。'); return; }
+        if (record?.conflict) { new Notice('The attachment association is conflicting. Check the gallery.'); return; }
         if (!record?.index) {
             const asset = this.app.vault.getFileByPath(path);
-            if (!asset || !await confirmAction(this.app, '建立附件索引？', [path, '只为该附件建立索引，不执行全库补建。'], '建立索引')) return;
+            if (!asset || !await confirmAction(this.app, 'Create attachment index?', [path, 'Create an index only for this attachment.'], 'Create index')) return;
             await this.sidecars.createSidecar(asset); this.refresh(); record = this.registry.records.get(path);
         }
         if (!this.disposed && record?.index) await this.app.workspace.getLeaf(newTab ? 'tab' : false).openFile(record.index);
     }
     openSource(record?: AttachmentRecord): void {
-        if (record?.conflict) { new Notice('附件关联冲突。'); return; }
-        if (!safeSource(record ? effectiveUrl(record.metadata) : undefined)) { new Notice('索引中未设置有效出处 URL。'); return; }
+        if (record?.conflict) { new Notice('The attachment association is conflicting.'); return; }
+        if (!safeSource(record ? effectiveUrl(record.metadata) : undefined)) { new Notice('The index has no valid source URL.'); return; }
         window.open(effectiveUrl(record!.metadata).trim(), '_blank');
     }
     private menu(event: MouseEvent, record: AttachmentRecord | undefined, path: string): void {
-        new Menu().addItem(item => item.setTitle('打开索引').onClick(() => { void this.openIndex(path); })).addItem(item => item.setTitle('新标签打开索引').onClick(() => { void this.openIndex(path, true); })).addItem(item => item.setTitle('打开出处').onClick(() => this.openSource(record))).showAtMouseEvent(event);
+        new Menu().addItem(item => item.setTitle('Open index').onClick(() => { void this.openIndex(path); })).addItem(item => item.setTitle('Open index in new tab').onClick(() => { void this.openIndex(path, true); })).addItem(item => item.setTitle('Open source').onClick(() => this.openSource(record))).showAtMouseEvent(event);
     }
     dispose(): void {
         this.disposed = true;

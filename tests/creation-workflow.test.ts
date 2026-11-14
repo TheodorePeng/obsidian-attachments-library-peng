@@ -48,8 +48,8 @@ it('creates only at root, prevents duplicate clicks and never binds an occupied 
     const create=f.app.vault.create.getMockImplementation()!; let release!:()=>void; const gate=new Promise<void>(r=>release=r);
     f.app.vault.create.mockImplementation(async(path:string,text:string)=>{await gate;return create(path,text);});
     const pending=f.p.createGallery(); await expect(f.p.createGallery()).rejects.toThrow('running'); await expect(f.p.selectBase('Taken.base')).rejects.toThrow('running'); release(); await pending;
-    expect(f.p.settings.defaultBasePath).toBe('Attachments Library.base'); expect(f.p.settings.defaultViewName).toBeTruthy(); await f.p.createGallery('Another'); expect(f.p.settings.defaultBasePath).toBe('Another.base');
-    await f.p.clearBase(); expect(f.files.has('Attachments Library.base')).toBe(true); expect(f.p.settings.defaultViewOwner).toBe('');
+    expect(f.p.settings.defaultBasePath).toBe('Attachment Index.base'); expect(f.p.settings.defaultViewName).toBeTruthy(); await f.p.createGallery('Another'); expect(f.p.settings.defaultBasePath).toBe('Another.base');
+    await f.p.clearBase(); expect(f.files.has('Attachment Index.base')).toBe(true); expect(f.p.settings.defaultViewOwner).toBe('');
 });
 it('preserves old Base on validation or save failure and leaves a created file available for recovery',async()=>{
     const f=await setup({'A.base':base,'Broken.base':'views: ['}); await f.p.selectBase('A.base');
@@ -74,7 +74,7 @@ it('does not create during initialization or retroactively enable already queued
     const f=fixture({'a.png':'x','b.png':'x'}); let layout!:()=>void; f.app.workspace.onLayoutReady=(cb:()=>void)=>layout=cb; const p=new Plugin(f.app); p.loadData=vi.fn(async()=>null); await p.onload();
     f.events.create(f.files.get('a.png')); layout(); await p.ready; await flush(p); expect(f.writes).toEqual([]);
     await p.setAutoCreate(false); f.events.create(f.files.get('b.png')); await p.setAutoCreate(true); await flush(p); expect(f.writes).toEqual([]);
-    f.events.create(f.files.get('b.png')); await flush(p); expect(f.files.has('Library/b.png.md')).toBe(true); expect(p.settings.defaultBasePath).toBe('');
+    f.events.create(f.files.get('b.png')); await flush(p); expect(f.files.has('Attachment Library/b.png.md')).toBe(true); expect(p.settings.defaultBasePath).toBe('');
 });
 it('cancels queued automatic creations even if automation is re-enabled before the queue runs',async()=>{
     const f=await setup({'a.png':'x'},null); let release!:()=>void; (f.p as any).eventQueue=new Promise<void>(r=>release=r);

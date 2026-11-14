@@ -11,7 +11,7 @@ import { GALLERY_DEFAULT_ORDER } from './gallery-config';
 export class GalleryConnection extends Modal {
     private mode: 'existing' | 'new' = 'existing';
     private path: string;
-    private name = 'Attachments Library.base';
+    private name = 'Attachment Index.base';
     private view = '';
     private request = 0;
     private busy = false;

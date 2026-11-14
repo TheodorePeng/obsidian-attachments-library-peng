@@ -2,10 +2,12 @@ import { DeletionRecovery, Journal, recoveryVault } from './deletion-recovery';
 import { SourceChange, planReferenceEdit } from './reference-edits';
 import { effectiveKeep, managedIssues } from './managed-properties';
 import { App, MarkdownView, TFile } from 'obsidian';
-import { AttachmentRegistry, AttachmentRecord } from './registry';
+import { AttachmentRegistry, AttachmentRecord, readDocument } from './registry';
 import { ReferenceService, Usage } from './references';
 import { isEligiblePath } from './file-policy';
 export type DeleteMode = 'metadata-only' | 'pair';
+export type BlockCode = 'keep' | 'invalid-keep' | 'pending' | 'conflict' | 'missing-index' | 'references' | 'index-used' | 'scope' | 'desktop' | 'unsupported' | 'editor' | 'unknown';
+class DeleteBlocked extends Error { constructor(public code: BlockCode, message: string) { super(message); } }
 interface Fingerprint {
     path: string;
     mtime: number;
@@ -24,6 +26,7 @@ export interface DeleteReview {
     indexPaths: string[];
     usage?: Usage;
     blockedReason?: string;
+    blockCode?: BlockCode;
     hasUserBody: boolean;
 }
 export interface DeletePlan {
@@ -37,6 +40,7 @@ export interface DeletePlan {
     skipped: {
         path: string;
         reason: string;
+        code?: BlockCode;
     }[];
 }
 export interface DeleteStep {
@@ -109,14 +113,39 @@ export class DeletionService {
     }
     private assertAllowed(record: AttachmentRecord, mode: DeleteMode, refs: ReferenceService): void {
         const usage = refs.getUsage(record);
-        if ((record.indexPaths ?? []).some(path => this.hasPendingEdits(path))) throw new Error('Index has pending property edits; save or cancel first.');
-        if (effectiveKeep(record.metadata)) throw new Error('Protected by keep or legacy al_keep: ' + record.assetPath);
+        if ((record.indexPaths ?? []).some(path => this.hasPendingEdits(path))) throw new DeleteBlocked('pending', 'Index has pending property edits; save or cancel first.');
         const issues = managedIssues(record.metadata);
-        if (record.conflict || issues.length || usage.state === 'excluded') throw new Error('Protected attachment: ' + record.assetPath + ' — ' + (record.reason || issues.join('; ') || usage.state));
-        if (!record.index || !record.indexPath) throw new Error('No unique metadata index: ' + record.assetPath);
-        if (!usage.indexCheckComplete || mode === 'pair' && !usage.assetCheckComplete) throw new Error('Reference checks incomplete: ' + usage.reasons.slice(0, 5).join('; '));
-        if (mode === 'metadata-only' && usage.indexSources.length) throw new Error('Metadata document is referenced: ' + record.indexPath);
-        if (mode === 'pair' && (!record.asset || !isEligiblePath(record.assetPath, this.registry.settings))) throw new Error('Attachment outside cleanup scope: ' + record.assetPath);
+        if (issues.some(issue => issue.includes('keep'))) throw new DeleteBlocked('invalid-keep', 'Keep settings are invalid or disagree. Open the index to fix them.');
+        if (record.conflict) throw new DeleteBlocked('conflict', record.reason);
+        if (effectiveKeep(record.metadata)) throw new DeleteBlocked('keep', 'Protected by keep or legacy al_keep: ' + record.assetPath);
+        if (usage.state === 'excluded') throw new DeleteBlocked('scope', 'Attachment outside cleanup scope: ' + record.assetPath);
+        if (record.conflict || issues.length) throw new DeleteBlocked('conflict', 'Protected attachment: ' + record.assetPath + ' — ' + (record.reason || issues.join('; ') || usage.state));
+        if (!record.index || !record.indexPath) throw new DeleteBlocked('missing-index', 'No unique metadata index: ' + record.assetPath);
+        if (!usage.indexCheckComplete || mode === 'pair' && !usage.assetCheckComplete) throw new DeleteBlocked('references', 'Reference checks incomplete: ' + usage.reasons.slice(0, 5).join('; '));
+        if (mode === 'metadata-only' && usage.indexSources.length) throw new DeleteBlocked('index-used', 'Metadata document is referenced: ' + record.indexPath);
+        if (mode === 'pair' && (!record.asset || !isEligiblePath(record.assetPath, this.registry.settings))) throw new DeleteBlocked('scope', 'Attachment outside cleanup scope: ' + record.assetPath);
+    }
+    /** Called only after an explicit confirmation for the selected index. */
+    async turnOffKeep(indexPath: string, expectedAssetPath?: string): Promise<void> {
+        if (!this.isActive() || this.busy || this.preparing) throw new Error('Another operation is in progress.');
+        this.busy = true; this.ownedPaths = new Set([indexPath]);
+        try {
+            await this.registry.refresh(true);
+            const record = this.registry.byIndex.get(indexPath);
+            if (!record?.index || expectedAssetPath && record.assetPath !== expectedAssetPath || record.indexPaths?.length !== 1 || record.conflict || managedIssues(record.metadata).length) throw new Error('The index is missing or has conflicting properties. Open it to fix the problem.');
+            if (this.hasPendingEdits(indexPath)) throw new Error('Save or cancel the pending property edit first.');
+            await this.assertCleanEditors(new Set([indexPath]));
+            const file = record.index, before = await this.app.vault.read(file), metadata = readDocument(before).metadata;
+            if (!effectiveKeep(metadata) || managedIssues(metadata).length) throw new Error('The protection changed. Recheck before continuing.');
+            await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+                if (!this.isActive() || this.hasPendingEdits(indexPath) || this.app.vault.getFileByPath(indexPath) !== file) throw new Error('The index changed. Recheck before continuing.');
+                if (JSON.stringify(frontmatter) !== JSON.stringify(metadata)) throw new Error('The index changed. Recheck before continuing.');
+                for (const leaf of this.app.workspace.getLeavesOfType('markdown')) if (leaf.view instanceof MarkdownView && leaf.view.file === file && leaf.view.editor.getValue() !== before) throw new Error('Save the index before continuing.');
+                if (frontmatter.keep === true) frontmatter.keep = false;
+                if (frontmatter.al_keep === true) frontmatter.al_keep = false;
+            });
+            this.registry.invalidate(indexPath); await this.registry.refresh(true); await this.references.refresh(undefined, false);
+        } finally { this.ownedPaths.clear(); this.busy = false; }
     }
     private async assertCleanEditors(paths: ReadonlySet<string>): Promise<void> {
         for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
@@ -148,11 +177,11 @@ export class DeletionService {
             const indexPaths = record.indexPaths ?? [], hasUserBody = record.index ? !!(await this.app.vault.read(record.index)).replace(/^---\r?\n[\s\S]*?\r?\n---/, '').replace(/<!-- alp:preview:start -->[\s\S]*?<!-- alp:preview:end -->/g, '').trim() : false;
             const review: DeleteReview = { assetPath: record.assetPath, indexPaths, usage: refs.getUsage(record), hasUserBody }; reviews.push(review);
             try {
-                if (!this.recovery.available()) throw new Error('Recoverable deletion requires the desktop app.');
+                if (!this.recovery.available()) throw new DeleteBlocked('desktop', 'Recoverable deletion requires the desktop app.');
                 this.assertAllowed(record, mode, refs);
                 const files = mode === 'pair' ? [record.asset!, record.index!] : [record.index!];
                 targets.push({ assetPath: record.assetPath, indexPath: record.indexPath!, files: await Promise.all(files.map(file => this.fingerprint(file))), hasUserBody, safetySnapshot: refs.safetySnapshot(record, mode) });
-            } catch (error) { review.blockedReason = error instanceof Error ? error.message : 'Protected'; skipped.push({ path, reason: review.blockedReason }); }
+            } catch (error) { review.blockedReason = error instanceof Error ? error.message : 'Protected'; review.blockCode = error instanceof DeleteBlocked ? error.code : 'unknown'; skipped.push({ path, reason: review.blockedReason, code: review.blockCode }); }
         }
         const removedPaths = new Set(targets.flatMap(target => target.files.map(file => file.path))), changes: SourceChange[] = [];
         if (mode === 'pair') {
@@ -165,18 +194,18 @@ export class DeletionService {
             for (const path of sources) try {
                 const file = this.app.vault.getFileByPath(path); if (!file) throw new Error('Source disappeared: ' + path);
                 changes.push(planReferenceEdit(this.app, path, await this.app.vault.read(file), removedPaths, properties.get(path)));
-            } catch (error) { skipped.push({ path, reason: error instanceof Error ? error.message : 'Unsupported reference' }); }
+            } catch (error) { skipped.push({ path, reason: error instanceof Error ? error.message : 'Unsupported reference', code: 'unsupported' }); }
         }
         if (mode === 'pair' && targets.length && !skipped.length) {
             const projected = await this.snapshot(new Map(changes.map(change => [change.path, change.after])));
             for (const target of targets) {
                 const usage = projected.getUsage(this.registry.records.get(target.assetPath)!);
                 const remaining = usage.sources.filter(path => !removedPaths.has(path));
-                if (remaining.length || !usage.assetCheckComplete || !usage.indexCheckComplete) skipped.push({ path: target.assetPath, reason: 'Some references cannot be safely removed: ' + [...remaining, ...usage.reasons.slice(0, 3)].join('; ') });
+                if (remaining.length || !usage.assetCheckComplete || !usage.indexCheckComplete) skipped.push({ path: target.assetPath, reason: 'Some references cannot be safely removed: ' + [...remaining, ...usage.reasons.slice(0, 3)].join('; '), code: 'unsupported' });
             }
         }
         try { await this.assertCleanEditors(new Set([...removedPaths, ...changes.map(change => change.path)])); }
-        catch (error) { skipped.push({ path: '(editors)', reason: error instanceof Error ? error.message : 'Unsaved content' }); }
+        catch (error) { skipped.push({ path: '(editors)', reason: error instanceof Error ? error.message : 'Unsaved content', code: 'editor' }); }
         const plan: DeletePlan = { token: window.crypto.randomUUID(), mode, generation: this.registry.generation, referenceGeneration: refs.generation, targets, skipped, reviews, changes };
         this.issued.set(plan.token, JSON.stringify(plan));
         this.identities.set(plan.token, new Map([...removedPaths, ...changes.map(change => change.path)].map(path => [path, this.app.vault.getFileByPath(path)!])));
