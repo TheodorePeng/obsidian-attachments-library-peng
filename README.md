@@ -1,6 +1,6 @@
 # Attachments Library Peng
 
-基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.5.0**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。本轮运行验收使用 macOS 上的 Obsidian 1.15.1。
+基于 José Compadre Junior 的 [Attachments Library](https://github.com/compadrejunior/attachments-library) 开发的 Obsidian 附件索引与画廊插件。当前版本 **1.6.0**，插件 ID 为 `attachments-library-peng`，最低 Obsidian 版本为 `1.13.1`。1.6.0 的隔离运行验收使用 macOS 上的 Obsidian 1.13.7，已发布为 GitHub Release，可通过 BRAT 安装或更新。
 
 附件保存在原位置，配套的普通 Markdown 索引承载 Properties、OCR 和说明。使用原生 Bases 查询与插件画廊管理这些索引。
 
@@ -26,21 +26,21 @@ BRAT 通过 GitHub API 读取 Release 列表。公开仓库的匿名请求按 IP
 
 ## 设置入口
 
-设置页全部使用英文，分为 Gallery、Indexing、Managed properties、Image button、Maintenance。
+设置页按 Gallery、Indexing、Existing library、Image interaction、Maintenance & recovery 组织。
 
-1. 未配置默认 Base 时，在 **Base setup** 选择 **Use existing Base** 或 **Create new Base**，两种方式只展开其一。
-2. 选用已有 Base：在 **Default base file** 输入 Vault 相对路径，候选只提示 `.base` 文件；选择候选只填写草稿，点击 **Apply** 后保存。
-3. 新建 Base：在 Vault 根目录创建，默认名 `Attachments Library.base`，可修改文件名。创建成功后自动选用；已有同名文件不会被覆盖。
-4. 已选用时隐藏新建入口。**Clear selection** 只取消默认关联，不删除文件。Base 或其父目录在 Obsidian 中移动后自动更新路径；插件停用期间发生移动可手动修改。
-5. 自动选用插件标记的全部附件画廊，或唯一画廊；有多个其他画廊时使用 **Default view** 选择。没有画廊的合法 Base 可以先选用，再通过 **Maintenance → Repair gallery views** 显式添加；选择和打开不会修复文件。
+1. **Gallery** 以状态卡显示当前 Base 完整路径、默认视图与连接状态。**Connect gallery… / Change…** 打开一个连接对话框，文件与视图一次提交；取消保留原连接。
+2. **Existing Base** 支持任何名称、位置和创建来源的合法 Base。只要有当前插件的兼容视图即可连接；创建标记不是资格证明。多个视图可在同一对话框选择。没有兼容视图时，**Add gallery view…** 先预览，再明确备份添加，保留原筛选、名称及其他视图。
+3. **New Base** 与已有文件表单互斥，在 Vault 根目录创建默认 `Attachments Library.base`，可修改文件名。**Create and connect** 成功后才替换原连接；同名文件不覆盖。文件创建后连接保存失败会显示新文件路径，供重新选用，不自动删除或复制。
+4. 状态卡的 **Open gallery** 只打开所选文件及视图。**More… → Disconnect** 只取消连接。文件丢失、配置损坏和视图变化都有 **Fix connection…** 入口，不自动重建文件。
+5. Gallery 连接、新索引位置、Base 筛选是三个独立概念。已有 Base 的筛选不自动改写；例如仍筛选 `Library/旧目录` 的画廊不会显示新目录中的索引，这并不表示连接失效。
 
-默认 Base 只决定打开命令的目标。其他 Base 仍可各自添加插件画廊，使用独立的查询、排序、分组和 Properties 配置。Base 筛选条件与附件索引范围分别设置。
+**New index notes folder** 是新 Markdown 索引的输出目录。输入和文件夹候选选择只改变草稿，**Save location** 保存，**Cancel changes** 取消；关闭设置页丢弃未保存草稿。保存反馈和错误就地显示，失败时保留输入并说明旧位置仍生效。不要把 `Gallery.base` 填入目录字段：该字段需要文件夹，例如 `资料/附件索引`。不存在的目录只在首次创建索引时建立。
 
-**Entire Vault** 模式隐藏 Attachment folder；切回文件夹模式恢复已保存的目录。**Index notes folder** 使用文件夹候选和 **Apply** 保存，只影响新索引，目录按需建立。输入、候选预览及清空草稿不会保存设置；关闭设置页丢弃未应用草稿。
+**Entire Vault** 模式隐藏 Attachment folder；切回文件夹模式恢复已保存目录。Base 和索引目录及其父目录在 Obsidian 中移动后自动跟踪；插件停用期间的移动通过手动选用或重新发现恢复。
 
 新索引直接平铺到目标目录，例如附件 `Attachments/课程/图片.png` 对应 `Library/图片.png.md`。同名时依次使用 `图片.png (2).md`、`图片.png (3).md`，保留完整附件路径作为关联依据，不覆盖普通笔记。已有索引保留原位置，不重复创建；附件改名更新关联和受控预览，不移动索引。索引目录及其父目录在 Obsidian 中移动后跟踪更新设置。
 
-目录不能为 Vault 根目录、隐藏目录，不能包含整个附件索引范围；全库模式下不能选择已包含附件的目录。所有路径均为 Vault 相对路径。扩展名白名单始终禁止 Markdown 及其变体、Base 和 Canvas。
+索引使用独立目录，不能选择 Vault 根目录、隐藏/配置目录、附件范围的祖先目录，或包含参与管理原附件的目录。相对路径支持中文和空格；桌面端也接受当前 Vault 内可核对的绝对路径，并转换显示为相对路径。Vault 外路径不接受。扩展名白名单始终禁止 Markdown 及其变体、Base 和 Canvas。
 
 新安装默认开启 **Create indexes for new attachments**；已有安装保留原来的有效开关值。自动创建从初始化完成后开始，只处理以后新增、包括同步到库的合格附件。开关开启不补建历史文件，也不要求先创建 Base；历史附件通过 **Scan attachments…** 明确预览补建。关闭会取消尚未执行的自动创建任务，已创建索引保留。
 
@@ -74,9 +74,17 @@ BRAT 通过 GitHub API 读取 Release 列表。公开仓库的匿名请求按 IP
 
 原生类型登记只涉及八个必需字段；同名全 Vault 类型或现有值有冲突时，设置页列出受影响文件。必需保留字段损坏时维持保护，通过更新预览和 Properties 修复。
 
+## 重新接管已有资料
+
+Schema 1／2 索引在任意位置均可识别，不依赖某次安装或旧 `data.json`。重装后重新连接已有 Base 即可。当前输出目录不限制旧索引身份，也不会搬迁文件。
+
+**Existing library → Restore existing library…** 只读发现兼容 Base、可携带索引、未标记旧候选及冲突。旧候选必须同时具备一致的 `_filePath` 和附件链接；用户勾选、预览并确认后，先备份，再只补 `al_schema: 1`。正文、OCR、自定义属性、保护状态和位置保留。重复关联、未知 schema、保护字段损坏等不自动接管。
+
+存在可信旧索引候选时，自动创建会保护该附件，避免重装后生成重复索引。普通笔记不会只因所在文件夹而变成索引。
+
 ## 旧索引迁移
 
-通过 **Maintenance → Migrate index properties…** 选择当前索引、文件夹或全部已识别索引，先检查差异，再确认备份和迁移。
+通过 **Maintenance & recovery → Migrate index properties…** 选择当前索引、文件夹或全部已识别索引，先检查差异，再确认备份和迁移。
 
 - 旧 `source` 地址迁入 `url`，`al_keep` 兼容迁为 `keep`。
 - 有意义的旧标题、非默认阅读状态追加到正文末尾的 **Legacy metadata**；原 OCR 和说明保留。
@@ -89,13 +97,21 @@ BRAT 通过 GitHub API 读取 Release 列表。公开仓库的匿名请求按 IP
 
 图标位于图片右侧居中，默认自动隐藏。普通点击打开索引；Command/Ctrl 点击默认打开 `url`，也可在设置中选择索引新标签。Command 悬浮图标或画廊名称时预览索引 Markdown，Hover Editor 可接续处理。
 
-本插件的安全删除入口提供“仅删除索引”和“删除附件及索引”，展示引用、全部关联、保留原因及实际回收文件。`keep`、关联冲突、引用检查不完整、未保存编辑和属性草稿都参与保护；隐藏属性不改变保护。文件进入 Vault 本地 `.trash`。
+卡片更多菜单中的“仅删除索引”保持原附件与其他文档不变；有外部索引引用时仍受保护。“删除附件及索引”先生成一个完整预览，列出回收目标、所有来源修改、阻塞原因及准确的修改前后内容。
+
+确认 **Remove references and move to trash** 后，移除匹配的 Markdown／Wiki 嵌入；普通链接保留标签或文件名文字；YAML 列表只移除匹配项，纯链接标量清空；Canvas 文件/本地链接节点和关联边一并移除，文本节点只清理引用，分组只清除背景；可定位的静态 HTML 图片/链接、Base 静态地址及直接来源属性按预览处理。保留其他正文、节点、边、属性和代码/数学/注释。
+
+设置 URI、无资源地址的 HTML 占位文字及常见 Base 公式不会被误认为全库附件引用。重复的普通 YAML 键都会参与引用扫描；重复的身份或保护字段保持冲突保护。无法可靠定位/修改的动态引用、未知来源、keep、重复索引、相关未保存编辑、待提交卡片草稿仍阻止执行。多选包含阻塞项时整批不执行，不静默跳过。
+
+执行前重新验证快照，先建立 Vault 外二进制及源文档备份和持久化阶段记录，再逐文件修改、重新扫描，最后移到 Vault 本地 `.trash`。本流程不执行永久删除，也不宣称跨文件系统原子性。中途失败先恢复原目标，再按内容条件恢复引用；不覆盖后续用户编辑。发生冲突时显示 **Recovery required**，保留备份。
 
 原生 Cards、表格和 CMS 的自带删除按各自行为执行；成对删除请使用本插件明确标记的安全入口。
 
 ## 恢复与验证
 
-迁移、类型登记和修复的私有备份及报告位于 `~/.local/share/attachments-library-peng/backups`（目录 0700，文件 0600）。最近操作摘要及恢复位置保存在插件设置中，重载后可查看。桌面恢复能力延迟加载；移动端迁移与恢复尚未验收。
+迁移、类型登记和修复的私有备份及报告位于 `~/.local/share/attachments-library-peng/backups`（目录 0700，文件 0600）。最近操作摘要及恢复位置保存在插件设置中，重载后可查看。**Maintenance & recovery → Recovery records…** 列出本 Vault 的删除记录与未完成任务。**Review restoration…** 明确确认后恢复，路径占用、内容变化和备份完整性异常会受到保护。回收站副本和私有备份不自动清理。
+
+备份仅存本机，不随 Vault 同步。恢复文件包含原始二进制、索引及被修改的引用文档；其他迁移操作继续使用各自报告。桌面能力延迟加载；移动端缺少等效持久化备份时禁用回收执行，普通浏览与设置保留。真实移动设备尚未验收。
 
 ```bash
 npm ci
@@ -104,9 +120,10 @@ node --experimental-strip-types --test tests/file-policy.acceptance.mjs tests/ba
 git diff --check
 ```
 
+- [1.6.0 设置、接管与可恢复删除验收](docs/acceptance-1.6.0-2026-11-14.md)
 - [1.5.0 设置与索引创建验收记录](docs/settings-indexing-acceptance-2026-11-14.md)
 - [1.4.0 实施约定](docs/implementation-plan-1.4.0.zh-CN.md)
 - [1.4.0 验收、截图与恢复记录](docs/implementation-acceptance-1.4.0-2026-10-26.md)
 - [1.3.0 及以前的 README 历史](docs/README-through-1.3.0.md)
 
-保留原项目作者信息与 [MIT 许可](LICENSE)。当前为正式发布的 1.5.0 版本。
+保留原项目作者信息与 [MIT 许可](LICENSE)。1.6.0 已提交、推送并发布为 GitHub Release，BRAT 用户可直接安装或更新。
