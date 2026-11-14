@@ -279,4 +279,8 @@ if [ -n "$GENERATED_NOTES" ] && [ -f "$GENERATED_NOTES" ]; then
 fi
 
 echo ""
-echo "✓ $VERSION tagged, pushed and published — BRAT 用户可直接安装或更新。"
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "✓ dry run only — nothing was written, committed, pushed, tagged or published."
+else
+    echo "✓ $VERSION tagged, pushed and published — BRAT 用户可直接安装或更新。"
+fi

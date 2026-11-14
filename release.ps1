@@ -277,4 +277,9 @@ if ($generatedNotes -and (Test-Path $generatedNotes)) {
 }
 
 Write-Host ""
-Write-Host "✓ $Version tagged, pushed and published — BRAT 用户可直接安装或更新。"
+if ($DryRun) {
+    Write-Host "✓ dry run only — nothing was written, committed, pushed, tagged or published."
+}
+else {
+    Write-Host "✓ $Version tagged, pushed and published — BRAT 用户可直接安装或更新。"
+}
