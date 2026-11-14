@@ -1,6 +1,6 @@
 {
   "name": "attachments-library-peng",
-  "version": "1.6.2",
+  "version": "1.6.1",
   "description": "Vault attachment metadata, reference-aware library and guarded cleanup.",
   "author": "José Compadre Junior",
   "main": "main.js",
